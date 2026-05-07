@@ -28,10 +28,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.weatherapp.data.db.LocationEntity
 import com.example.weatherapp.domain.mapper.WeatherCodeMapper
-import com.example.weatherapp.domain.model.CurrentWeather
 import com.example.weatherapp.domain.model.DailyForecast
 import com.example.weatherapp.domain.model.Forecast
 import com.example.weatherapp.domain.model.HourlyForecast
+import com.example.weatherapp.settings.WeatherSettings
 import java.time.Duration
 import java.time.LocalDate
 import java.time.ZonedDateTime
@@ -42,6 +42,7 @@ import kotlin.math.roundToInt
 fun ForecastScreen(
     state: ForecastUiState,
     onSelectLocation: (Long) -> Unit,
+    onSetWidgetLocation: (Long, Int) -> Unit,
     onRefresh: () -> Unit,
     onExpandDay: (LocalDate) -> Unit
 ) {
@@ -56,6 +57,10 @@ fun ForecastScreen(
                 )
             }
         }
+        WidgetSelectionSection(
+            state = state,
+            onSetWidgetLocation = onSetWidgetLocation
+        )
         if (selected == null) {
             Text("Add a location to see the forecast.")
             return@Column
@@ -67,13 +72,42 @@ fun ForecastScreen(
             Button(onClick = onRefresh, enabled = !state.isRefreshing) {
                 Text(if (state.isRefreshing) "Refreshing" else "Refresh")
             }
-            CurrentWeatherPanel(selected.location, selected.forecast)
-            HourlyForecastSection(selected.forecast.hourly)
+            CurrentWeatherPanel(selected.location, selected.forecast, state.settings)
+            HourlyForecastSection(selected.forecast.hourly, state.settings)
             DailyForecastSection(
                 forecast = selected.forecast,
+                settings = state.settings,
                 expandedDay = state.expandedDay,
                 onExpandDay = onExpandDay
             )
+        }
+    }
+}
+
+@Composable
+private fun WidgetSelectionSection(
+    state: ForecastUiState,
+    onSetWidgetLocation: (Long, Int) -> Unit
+) {
+    Card {
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Widget locations", style = MaterialTheme.typography.titleMedium)
+            repeat(2) { slot ->
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.horizontalScroll(rememberScrollState())
+                ) {
+                    Text("Row ${slot + 1}", style = MaterialTheme.typography.labelLarge)
+                    state.items.forEach { item ->
+                        FilterChip(
+                            selected = item.location.widgetOrder == slot,
+                            onClick = { onSetWidgetLocation(item.location.id, slot) },
+                            label = { Text(item.location.name) }
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -92,7 +126,7 @@ private fun ErrorState(onRefresh: () -> Unit) {
 }
 
 @Composable
-private fun CurrentWeatherPanel(location: LocationEntity, forecast: Forecast) {
+private fun CurrentWeatherPanel(location: LocationEntity, forecast: Forecast, settings: WeatherSettings) {
     val current = forecast.current
     val condition = WeatherCodeMapper.condition(current.weatherCode)
     val currentHour = forecast.hourly.minByOrNull {
@@ -109,15 +143,15 @@ private fun CurrentWeatherPanel(location: LocationEntity, forecast: Forecast) {
                 )
                 Column {
                     Text(location.name, style = MaterialTheme.typography.headlineSmall)
-                    Text("${current.temperature.temp()} · ${condition.label}", style = MaterialTheme.typography.titleMedium)
+                    Text("${current.temperature.temp(settings)} - ${condition.label}", style = MaterialTheme.typography.titleMedium)
                 }
             }
             DetailGrid(
                 listOf(
-                    "Feels like" to current.feelsLike.temp(),
+                    "Feels like" to current.feelsLike.temp(settings),
                     "Humidity" to "${current.humidity}%",
-                    "Wind" to "${current.windSpeed.oneDecimal()} km/h ${current.windDirection.compass()}",
-                    "Rain now" to "${current.rain.oneDecimal()} mm",
+                    "Wind" to "${current.windSpeed.oneDecimal()} ${settings.windUnitLabel()} ${current.windDirection.compass()}",
+                    "Rain now" to "${current.rain.oneDecimal()} ${settings.precipitationUnitLabel()}",
                     "Precip chance" to (currentHour?.precipitationProbability?.let { "$it%" } ?: "Unavailable"),
                     "Pressure" to "${current.pressure.roundToInt()} hPa",
                     "Cloud cover" to "${current.cloudCover}%",
@@ -152,7 +186,7 @@ private fun DetailGrid(items: List<Pair<String, String>>) {
 }
 
 @Composable
-private fun HourlyForecastSection(hourly: List<HourlyForecast>) {
+private fun HourlyForecastSection(hourly: List<HourlyForecast>, settings: WeatherSettings) {
     val now = ZonedDateTime.now(hourly.firstOrNull()?.time?.zone)
     val next48 = hourly.filter { !it.time.isBefore(now.minusHours(1)) }.take(48)
 
@@ -160,14 +194,14 @@ private fun HourlyForecastSection(hourly: List<HourlyForecast>) {
         Text("Hourly", style = MaterialTheme.typography.titleLarge)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
             next48.forEach { item ->
-                HourlyCard(item)
+                HourlyCard(item, settings)
             }
         }
     }
 }
 
 @Composable
-private fun HourlyCard(item: HourlyForecast) {
+private fun HourlyCard(item: HourlyForecast, settings: WeatherSettings) {
     Card(modifier = Modifier.width(112.dp)) {
         Column(Modifier.padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(item.time.format(DateTimeFormatter.ofPattern("EEE HH:mm")), style = MaterialTheme.typography.labelMedium)
@@ -176,10 +210,10 @@ private fun HourlyCard(item: HourlyForecast) {
                 contentDescription = WeatherCodeMapper.condition(item.weatherCode).label,
                 modifier = Modifier.size(28.dp)
             )
-            Text(item.temperature.temp(), style = MaterialTheme.typography.titleMedium)
-            Text("Feels ${item.feelsLike.temp()}", style = MaterialTheme.typography.bodySmall)
+            Text(item.temperature.temp(settings), style = MaterialTheme.typography.titleMedium)
+            Text("Feels ${item.feelsLike.temp(settings)}", style = MaterialTheme.typography.bodySmall)
             Text("Rain ${item.precipitationProbability?.let { "$it%" } ?: "-"}", style = MaterialTheme.typography.bodySmall)
-            Text("Wind ${item.windSpeed.roundToInt()} km/h", style = MaterialTheme.typography.bodySmall)
+            Text("Wind ${item.windSpeed.roundToInt()} ${settings.windUnitLabel()}", style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -187,6 +221,7 @@ private fun HourlyCard(item: HourlyForecast) {
 @Composable
 private fun DailyForecastSection(
     forecast: Forecast,
+    settings: WeatherSettings,
     expandedDay: LocalDate?,
     onExpandDay: (LocalDate) -> Unit
 ) {
@@ -196,6 +231,7 @@ private fun DailyForecastSection(
             DailyCard(
                 day = day,
                 hourly = forecast.hourly.filter { it.time.toLocalDate() == day.date },
+                settings = settings,
                 expanded = expandedDay == day.date,
                 onClick = { onExpandDay(day.date) }
             )
@@ -207,47 +243,53 @@ private fun DailyForecastSection(
 private fun DailyCard(
     day: DailyForecast,
     hourly: List<HourlyForecast>,
+    settings: WeatherSettings,
     expanded: Boolean,
     onClick: () -> Unit
 ) {
     Card(onClick = onClick) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Image(
                     painter = painterResource(WeatherCodeMapper.drawableRes(day.weatherCode)),
                     contentDescription = WeatherCodeMapper.condition(day.weatherCode).label,
-                    modifier = Modifier.size(32.dp)
+                    modifier = Modifier.size(24.dp)
                 )
                 Column(Modifier.weight(1f)) {
                     Text(day.date.format(DateTimeFormatter.ofPattern("EEE d MMM")), style = MaterialTheme.typography.titleMedium)
-                    Text(WeatherCodeMapper.condition(day.weatherCode).label, style = MaterialTheme.typography.bodyMedium)
+                    Text(WeatherCodeMapper.condition(day.weatherCode).label, style = MaterialTheme.typography.bodySmall)
                 }
-                Text("${day.tempMin.temp()} / ${day.tempMax.temp()}", style = MaterialTheme.typography.titleMedium)
+                Text("${day.tempMin.temp(settings)} / ${day.tempMax.temp(settings)}", style = MaterialTheme.typography.titleMedium)
             }
-            DetailGrid(
-                listOf(
-                    "Precip max" to (day.precipitationProbabilityMax?.let { "$it%" } ?: "Unavailable"),
-                    "Rain total" to "${day.rainSum.oneDecimal()} mm",
-                    "Max wind" to "${day.windSpeedMax.roundToInt()} km/h",
-                    "UV max" to (day.uvIndexMax?.oneDecimal() ?: "Unavailable"),
-                    "Sunrise" to (day.sunrise?.format(DateTimeFormatter.ofPattern("HH:mm")) ?: "Unavailable"),
-                    "Sunset" to (day.sunset?.format(DateTimeFormatter.ofPattern("HH:mm")) ?: "Unavailable")
-                )
-            )
             if (expanded) {
+                DetailGrid(
+                    listOf(
+                        "Precip max" to (day.precipitationProbabilityMax?.let { "$it%" } ?: "Unavailable"),
+                        "Rain total" to "${day.rainSum.oneDecimal()} ${settings.precipitationUnitLabel()}",
+                        "Max wind" to "${day.windSpeedMax.roundToInt()} ${settings.windUnitLabel()}",
+                        "UV max" to (day.uvIndexMax?.oneDecimal() ?: "Unavailable"),
+                        "Sunrise" to (day.sunrise?.format(DateTimeFormatter.ofPattern("HH:mm")) ?: "Unavailable"),
+                        "Sunset" to (day.sunset?.format(DateTimeFormatter.ofPattern("HH:mm")) ?: "Unavailable")
+                    )
+                )
                 Spacer(Modifier.height(4.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                    hourly.forEach { HourlyCard(it) }
+                    hourly.forEach { HourlyCard(it, settings) }
                 }
             }
         }
     }
 }
 
-private fun Double.temp(): String = "${roundToInt()}°"
+private fun Double.temp(settings: WeatherSettings): String = "${roundToInt()}\u00B0${settings.temperatureSuffix()}"
 private fun Double.oneDecimal(): String = "%.1f".format(this)
+private fun WeatherSettings.temperatureSuffix(): String =
+    if (temperatureUnit == "fahrenheit") "F" else "C"
+private fun WeatherSettings.windUnitLabel(): String =
+    if (windSpeedUnit == "mph") "mph" else "km/h"
+private fun WeatherSettings.precipitationUnitLabel(): String =
+    if (precipitationUnit == "inch") "in" else "mm"
 private fun Int.compass(): String {
     val directions = listOf("N", "NE", "E", "SE", "S", "SW", "W", "NW")
     return directions[((this + 22.5) / 45).toInt() % 8]
 }
-

@@ -4,8 +4,11 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.weatherapp.data.repository.LocationRepository
 import com.example.weatherapp.data.repository.LocationForecast
 import com.example.weatherapp.data.repository.WeatherRepository
+import com.example.weatherapp.settings.WeatherSettings
+import com.example.weatherapp.settings.WeatherSettingsRepository
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 
@@ -14,14 +17,17 @@ data class ForecastUiState(
     val selectedLocationId: Long? = null,
     val isRefreshing: Boolean = false,
     val refreshMessage: String? = null,
-    val expandedDay: LocalDate? = null
+    val expandedDay: LocalDate? = null,
+    val settings: WeatherSettings = WeatherSettings()
 ) {
     val selected: LocationForecast?
         get() = items.firstOrNull { it.location.id == selectedLocationId } ?: items.firstOrNull()
 }
 
 class ForecastViewModel(
-    private val weatherRepository: WeatherRepository
+    private val locationRepository: LocationRepository,
+    private val weatherRepository: WeatherRepository,
+    private val settingsRepository: WeatherSettingsRepository
 ) : ViewModel() {
     private val _state = mutableStateOf(ForecastUiState())
     val state: State<ForecastUiState> = _state
@@ -32,6 +38,11 @@ class ForecastViewModel(
                 val selected = _state.value.selectedLocationId?.takeIf { id -> items.any { it.location.id == id } }
                     ?: items.firstOrNull()?.location?.id
                 _state.value = _state.value.copy(items = items, selectedLocationId = selected)
+            }
+        }
+        viewModelScope.launch {
+            settingsRepository.settings.collect { settings ->
+                _state.value = _state.value.copy(settings = settings)
             }
         }
         viewModelScope.launch {
@@ -49,7 +60,11 @@ class ForecastViewModel(
             _state.value = _state.value.copy(isRefreshing = true, refreshMessage = null)
             val result = weatherRepository.refreshLocation(selected)
             val message = if (result.isFailure) {
-                if (_state.value.selected?.forecast != null) "Could not refresh forecast" else result.exceptionOrNull()?.message ?: "Could not load forecast"
+                if (_state.value.selected?.forecast != null) {
+                    "Could not refresh forecast"
+                } else {
+                    "Could not load forecast. Check your connection."
+                }
             } else {
                 null
             }
@@ -63,15 +78,22 @@ class ForecastViewModel(
         )
     }
 
+    fun setWidgetLocation(locationId: Long, widgetOrder: Int) {
+        viewModelScope.launch {
+            locationRepository.setWidgetLocation(locationId, widgetOrder)
+        }
+    }
+
     private suspend fun refreshAll() {
         _state.value = _state.value.copy(isRefreshing = true, refreshMessage = null)
         val result = weatherRepository.refreshAll()
         val message = if (result.isFailure && _state.value.items.any { it.forecast != null }) {
             "Could not refresh forecast"
+        } else if (result.isFailure) {
+            "Could not load forecast. Check your connection."
         } else {
-            result.exceptionOrNull()?.message
+            null
         }
         _state.value = _state.value.copy(isRefreshing = false, refreshMessage = message)
     }
 }
-

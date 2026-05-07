@@ -2,12 +2,14 @@ package com.example.weatherapp.data.db
 
 import android.content.Context
 import androidx.room.Database
+import androidx.room.migration.Migration
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [LocationEntity::class, ForecastCacheEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = true
 )
 abstract class WeatherDatabase : RoomDatabase() {
@@ -23,8 +25,17 @@ abstract class WeatherDatabase : RoomDatabase() {
                     context.applicationContext,
                     WeatherDatabase::class.java,
                     "weather.db"
-                ).build().also { instance = it }
+                )
+                    .addMigrations(MIGRATION_1_2)
+                    .build()
+                    .also { instance = it }
             }
+
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE locations ADD COLUMN widgetOrder INTEGER")
+                db.execSQL("UPDATE locations SET widgetOrder = displayOrder WHERE displayOrder IN (0, 1)")
+            }
+        }
     }
 }
-

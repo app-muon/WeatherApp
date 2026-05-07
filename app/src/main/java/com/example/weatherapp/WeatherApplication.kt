@@ -37,8 +37,8 @@ class WeatherApplication : Application() {
 
 class AppContainer(context: Context) {
     private val database = WeatherDatabase.getInstance(context)
-    private val settingsRepository = WeatherSettingsRepository(context)
     private val forecastParser = ForecastParser()
+    val settingsRepository = WeatherSettingsRepository(context)
 
     val locationRepository = LocationRepository(
         locationDao = database.locationDao(),
@@ -54,4 +54,3 @@ class AppContainer(context: Context) {
         forecastParser = forecastParser
     )
 }
-

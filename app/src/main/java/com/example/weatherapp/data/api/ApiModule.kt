@@ -1,5 +1,6 @@
 package com.example.weatherapp.data.api
 
+import com.example.weatherapp.BuildConfig
 import com.google.gson.JsonObject
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -12,7 +13,11 @@ object ApiModule {
     private val client = OkHttpClient.Builder()
         .addInterceptor(
             HttpLoggingInterceptor().apply {
-                level = HttpLoggingInterceptor.Level.BASIC
+                level = if (BuildConfig.DEBUG) {
+                    HttpLoggingInterceptor.Level.BASIC
+                } else {
+                    HttpLoggingInterceptor.Level.NONE
+                }
             }
         )
         .build()
@@ -78,4 +83,3 @@ data class GeocodingResult(
     val admin1: String?,
     val timezone: String?
 )
-

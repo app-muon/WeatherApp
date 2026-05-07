@@ -59,6 +59,18 @@ class WeatherRepository(
             )
         }
 
+    suspend fun getCachedWidgetForecasts(): List<LocationForecast> =
+        locationDao.getWidgetLocationsWithCache().map { row ->
+            LocationForecast(
+                location = row.location,
+                forecast = row.forecastCache?.let {
+                    runCatching {
+                        forecastParser.parse(row.location.id, it.fetchedAtEpochMillis, it.rawJson)
+                    }.getOrNull()
+                }
+            )
+        }
+
     suspend fun refreshAll(): Result<Unit> {
         val locations = locationDao.getLocations()
         var failure: Throwable? = null
@@ -88,7 +100,7 @@ class WeatherRepository(
     }
 
     suspend fun refreshLocation(locationId: Long): Result<Unit> {
-        val location = locationDao.getLocations().firstOrNull { it.id == locationId }
+        val location = locationDao.getById(locationId)
             ?: return Result.failure(IllegalArgumentException("Location not found"))
         return refreshLocation(location)
     }
@@ -109,4 +121,3 @@ class WeatherRepository(
         }
     }
 }
-

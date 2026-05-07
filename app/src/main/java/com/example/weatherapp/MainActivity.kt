@@ -24,7 +24,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -50,6 +49,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         selectedLocationFromIntent = intent.locationIdExtra()
     }
 
@@ -64,7 +64,13 @@ class MainActivity : ComponentActivity() {
 private fun WeatherApp(selectedLocationId: Long) {
     val app = androidx.compose.ui.platform.LocalContext.current.applicationContext as WeatherApplication
     val forecastViewModel: ForecastViewModel = viewModel(
-        factory = simpleFactory { ForecastViewModel(app.container.weatherRepository) }
+        factory = simpleFactory {
+            ForecastViewModel(
+                locationRepository = app.container.locationRepository,
+                weatherRepository = app.container.weatherRepository,
+                settingsRepository = app.container.settingsRepository
+            )
+        }
     )
     val setupViewModel: SetupViewModel = viewModel(
         factory = simpleFactory {
@@ -146,9 +152,18 @@ private fun WeatherRoot(
                     ForecastScreen(
                         state = state,
                         onSelectLocation = forecastViewModel::selectLocation,
+                        onSetWidgetLocation = forecastViewModel::setWidgetLocation,
                         onRefresh = forecastViewModel::refreshSelected,
                         onExpandDay = forecastViewModel::toggleExpandedDay
                     )
+                }
+            }
+            if (state.items.size >= 2) {
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Manage locations", style = MaterialTheme.typography.titleLarge)
+                        SetupScreen(viewModel = setupViewModel)
+                    }
                 }
             }
         }

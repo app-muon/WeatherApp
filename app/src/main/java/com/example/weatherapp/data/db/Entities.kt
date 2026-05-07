@@ -16,7 +16,8 @@ data class LocationEntity(
     val latitude: Double,
     val longitude: Double,
     val timezone: String?,
-    val displayOrder: Int
+    val displayOrder: Int,
+    val widgetOrder: Int?
 )
 
 @Entity(
@@ -43,4 +44,3 @@ data class LocationWithForecastCache(
     @Relation(parentColumn = "id", entityColumn = "locationId")
     val forecastCache: ForecastCacheEntity?
 )
-
