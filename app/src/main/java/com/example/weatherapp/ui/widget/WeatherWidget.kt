@@ -8,6 +8,7 @@ import androidx.glance.GlanceModifier
 import androidx.glance.Image
 import androidx.glance.ImageProvider
 import androidx.glance.LocalContext
+import androidx.glance.LocalSize
 import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
@@ -61,52 +62,59 @@ class WeatherWidgetReceiver : GlanceAppWidgetReceiver() {
 @Composable
 private fun WeatherWidgetContent(items: List<LocationForecast>) {
     val context = LocalContext.current
+    val widgetSize = LocalSize.current
+    val rowHeight = ((widgetSize.height - 14.dp) / 2).coerceIn(34.dp, 64.dp)
     Column(
         modifier = GlanceModifier
             .fillMaxSize()
-            .background(ColorProvider(Color(0xFFEAF3EE)))
-            .padding(6.dp),
+            .background(ColorProvider(Color(0xFF00E5FF)))
+            .padding(2.dp)
+            .background(ColorProvider(Color(0xFFFF3DF2)))
+            .padding(1.dp)
+            .background(ColorProvider(Color(0xFF050711)))
+            .padding(5.dp),
         verticalAlignment = Alignment.Vertical.Top
     ) {
         when (items.size) {
             0 -> EmptyWidgetText("Tap to choose locations", context, 0)
             1 -> {
-                WeatherWidgetRow(items[0], context)
+                WeatherWidgetRow(items[0], context, rowHeight)
                 Spacer(GlanceModifier.height(2.dp))
-                EmptyWidgetText("Add second location", context, items[0].location.id)
+                EmptyWidgetText("Add second location", context, items[0].location.id, rowHeight)
             }
             else -> {
-                WeatherWidgetRow(items[0], context)
+                WeatherWidgetRow(items[0], context, rowHeight)
                 Spacer(GlanceModifier.height(2.dp))
-                WeatherWidgetRow(items[1], context)
+                WeatherWidgetRow(items[1], context, rowHeight)
             }
         }
     }
 }
 
 @Composable
-private fun WeatherWidgetRow(item: LocationForecast, context: Context) {
+private fun WeatherWidgetRow(item: LocationForecast, context: Context, rowHeight: androidx.compose.ui.unit.Dp) {
     val forecast = item.forecast
     Row(
         modifier = GlanceModifier
             .fillMaxWidth()
+            .height(rowHeight)
             .clickable(openAppAction(context, item.location.id)),
         verticalAlignment = Alignment.Vertical.CenterVertically
     ) {
         Text(
             text = item.location.name.take(16),
             modifier = GlanceModifier.width(96.dp),
-            style = TextStyle(fontWeight = FontWeight.Bold, fontSize = 15.sp, color = ColorProvider(Color(0xFF17352C)))
+            style = TextStyle(fontWeight = FontWeight.Bold, fontSize = 15.sp, color = ColorProvider(Color(0xFF00E5FF)))
         )
         if (forecast == null) {
-            Text("No cache", style = TextStyle(fontSize = 14.sp, color = ColorProvider(Color(0xFF557066))))
+            Text("No cache", style = TextStyle(fontSize = 14.sp, color = ColorProvider(Color(0xFFC5D8DE))))
         } else {
             CurrentCell(forecast)
             forecast.daily.take(3).forEach { day ->
                 DailyCell(day)
             }
             if (isStale(forecast)) {
-                Text("\u21BB", style = TextStyle(fontSize = 14.sp, color = ColorProvider(Color(0xFF7A6A00))))
+                Text("\u21BB", style = TextStyle(fontSize = 14.sp, color = ColorProvider(Color(0xFFE8FF4A))))
             }
         }
     }
@@ -121,7 +129,7 @@ private fun CurrentCell(forecast: Forecast) {
         WeatherImage(forecast.current.weatherCode)
         Text(
             text = forecast.current.temperature.temp(),
-            style = TextStyle(fontWeight = FontWeight.Medium, fontSize = 14.sp, color = ColorProvider(Color(0xFF17352C)))
+            style = TextStyle(fontWeight = FontWeight.Medium, fontSize = 14.sp, color = ColorProvider(Color(0xFFE8F7FF)))
         )
     }
 }
@@ -135,7 +143,7 @@ private fun DailyCell(day: DailyForecast) {
         WeatherImage(day.weatherCode)
         Text(
             text = "${day.tempMin.temp()}/${day.tempMax.temp()}",
-            style = TextStyle(fontWeight = FontWeight.Medium, fontSize = 13.sp, color = ColorProvider(Color(0xFF17352C)))
+            style = TextStyle(fontWeight = FontWeight.Medium, fontSize = 13.sp, color = ColorProvider(Color(0xFFE8F7FF)))
         )
     }
 }
@@ -150,14 +158,20 @@ private fun WeatherImage(code: Int) {
 }
 
 @Composable
-private fun EmptyWidgetText(text: String, context: Context, locationId: Long) {
+private fun EmptyWidgetText(
+    text: String,
+    context: Context,
+    locationId: Long,
+    rowHeight: androidx.compose.ui.unit.Dp = 42.dp
+) {
     Text(
         text = text,
         modifier = GlanceModifier
             .fillMaxWidth()
+            .height(rowHeight)
             .clickable(openAppAction(context, locationId))
             .padding(4.dp),
-        style = TextStyle(fontSize = 14.sp, color = ColorProvider(Color(0xFF17352C)))
+        style = TextStyle(fontSize = 14.sp, color = ColorProvider(Color(0xFF00E5FF)))
     )
 }
 
