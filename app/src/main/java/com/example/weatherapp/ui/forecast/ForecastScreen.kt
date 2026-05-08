@@ -18,6 +18,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -31,6 +32,7 @@ import com.example.weatherapp.domain.mapper.WeatherCodeMapper
 import com.example.weatherapp.domain.model.DailyForecast
 import com.example.weatherapp.domain.model.Forecast
 import com.example.weatherapp.domain.model.HourlyForecast
+import com.example.weatherapp.domain.model.MarineConditions
 import com.example.weatherapp.settings.WeatherSettings
 import java.time.Duration
 import java.time.LocalDate
@@ -42,25 +44,26 @@ import kotlin.math.roundToInt
 fun ForecastScreen(
     state: ForecastUiState,
     onSelectLocation: (Long) -> Unit,
-    onSetWidgetLocation: (Long, Int) -> Unit,
     onRefresh: () -> Unit,
     onExpandDay: (LocalDate) -> Unit
 ) {
     val selected = state.selected
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.horizontalScroll(rememberScrollState())
+        ) {
             state.items.forEach { item ->
+                val isSelected = item.location.id == selected?.location?.id
                 FilterChip(
-                    selected = item.location.id == selected?.location?.id,
+                    selected = isSelected,
                     onClick = { onSelectLocation(item.location.id) },
-                    label = { Text(item.location.name) }
+                    label = { Text(item.location.name) },
+                    colors = selectedChipColors(),
+                    border = selectedChipBorder(isSelected)
                 )
             }
         }
-        WidgetSelectionSection(
-            state = state,
-            onSetWidgetLocation = onSetWidgetLocation
-        )
         if (selected == null) {
             Text("Add a location to see the forecast.")
             return@Column
@@ -69,10 +72,7 @@ fun ForecastScreen(
         if (selected.forecast == null) {
             ErrorState(onRefresh)
         } else {
-            Button(onClick = onRefresh, enabled = !state.isRefreshing) {
-                Text(if (state.isRefreshing) "Refreshing" else "Refresh")
-            }
-            CurrentWeatherPanel(selected.location, selected.forecast, state.settings)
+            CurrentWeatherPanel(selected.location, selected.forecast, state.marineConditions, state.settings)
             HourlyForecastSection(selected.forecast.hourly, state.settings)
             DailyForecastSection(
                 forecast = selected.forecast,
@@ -85,7 +85,7 @@ fun ForecastScreen(
 }
 
 @Composable
-private fun WidgetSelectionSection(
+fun WidgetSelectionSection(
     state: ForecastUiState,
     onSetWidgetLocation: (Long, Int) -> Unit
 ) {
@@ -93,18 +93,22 @@ private fun WidgetSelectionSection(
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Widget locations", style = MaterialTheme.typography.titleMedium)
             repeat(2) { slot ->
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.horizontalScroll(rememberScrollState())
-                ) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("Row ${slot + 1}", style = MaterialTheme.typography.labelLarge)
-                    state.items.forEach { item ->
-                        FilterChip(
-                            selected = item.location.widgetOrder == slot,
-                            onClick = { onSetWidgetLocation(item.location.id, slot) },
-                            label = { Text(item.location.name) }
-                        )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.horizontalScroll(rememberScrollState())
+                    ) {
+                        state.items.forEach { item ->
+                            val isSelected = item.location.widgetOrder == slot
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = { onSetWidgetLocation(item.location.id, slot) },
+                                label = { Text(item.location.name) },
+                                colors = selectedChipColors(),
+                                border = selectedChipBorder(isSelected)
+                            )
+                        }
                     }
                 }
             }
@@ -126,7 +130,12 @@ private fun ErrorState(onRefresh: () -> Unit) {
 }
 
 @Composable
-private fun CurrentWeatherPanel(location: LocationEntity, forecast: Forecast, settings: WeatherSettings) {
+private fun CurrentWeatherPanel(
+    location: LocationEntity,
+    forecast: Forecast,
+    marineConditions: MarineConditions?,
+    settings: WeatherSettings
+) {
     val current = forecast.current
     val condition = WeatherCodeMapper.condition(current.weatherCode)
     val currentHour = forecast.hourly.minByOrNull {
@@ -159,7 +168,30 @@ private fun CurrentWeatherPanel(location: LocationEntity, forecast: Forecast, se
                     "Last updated" to forecast.fetchedAt.atZone(current.time.zone).format(DateTimeFormatter.ofPattern("HH:mm"))
                 )
             )
+            MarineConditionsSection(marineConditions)
         }
+    }
+}
+
+@Composable
+private fun MarineConditionsSection(marine: MarineConditions?) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 4.dp)) {
+        Text("Marine", style = MaterialTheme.typography.titleMedium)
+        if (marine == null || !marine.hasAvailableData()) {
+            Text("Marine unavailable", style = MaterialTheme.typography.bodyMedium)
+            return@Column
+        }
+        DetailGrid(
+            listOf<Pair<String, String>>(
+                Pair("Sea temperature", marine.seaSurfaceTemperature?.let { "${it.oneDecimal()}\u00B0C" } ?: "Unavailable"),
+                Pair("Wave height", marine.waveHeight?.let { "${it.oneDecimal()} m" } ?: "Unavailable"),
+                Pair("Wave period", marine.wavePeriod?.let { "${it.oneDecimal()} s" } ?: "Unavailable"),
+                Pair(
+                    "Wave direction",
+                    marine.waveDirection?.let { "${it}\u00B0 ${it.waveCompass()}" } ?: "Unavailable"
+                )
+            )
+        )
     }
 }
 
@@ -247,7 +279,16 @@ private fun DailyCard(
     expanded: Boolean,
     onClick: () -> Unit
 ) {
-    Card(onClick = onClick) {
+    Card(
+        onClick = onClick,
+        colors = CardDefaults.cardColors(
+            containerColor = if (expanded) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.surface
+            }
+        )
+    ) {
         Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Image(
@@ -293,3 +334,35 @@ private fun Int.compass(): String {
     val directions = listOf("N", "NE", "E", "SE", "S", "SW", "W", "NW")
     return directions[((this + 22.5) / 45).toInt() % 8]
 }
+
+private fun Int.waveCompass(): String = when (((this % 360) + 360) % 360) {
+    in 338..359, in 0..22 -> "N"
+    in 23..67 -> "NE"
+    in 68..112 -> "E"
+    in 113..157 -> "SE"
+    in 158..202 -> "S"
+    in 203..247 -> "SW"
+    in 248..292 -> "W"
+    else -> "NW"
+}
+
+private fun MarineConditions.hasAvailableData(): Boolean =
+    seaSurfaceTemperature != null || waveHeight != null || waveDirection != null || wavePeriod != null
+
+@Composable
+private fun selectedChipColors() = FilterChipDefaults.filterChipColors(
+    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+    labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+)
+
+@Composable
+private fun selectedChipBorder(isSelected: Boolean) = FilterChipDefaults.filterChipBorder(
+    enabled = true,
+    selected = isSelected,
+    borderColor = MaterialTheme.colorScheme.surfaceVariant,
+    selectedBorderColor = MaterialTheme.colorScheme.primary,
+    borderWidth = 1.dp,
+    selectedBorderWidth = 2.dp
+)

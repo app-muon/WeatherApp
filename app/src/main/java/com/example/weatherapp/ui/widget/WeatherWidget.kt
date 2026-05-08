@@ -39,6 +39,7 @@ import com.example.weatherapp.domain.mapper.WeatherCodeMapper
 import com.example.weatherapp.domain.model.DailyForecast
 import com.example.weatherapp.domain.model.Forecast
 import java.time.Instant
+import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -63,7 +64,8 @@ class WeatherWidgetReceiver : GlanceAppWidgetReceiver() {
 private fun WeatherWidgetContent(items: List<LocationForecast>) {
     val context = LocalContext.current
     val widgetSize = LocalSize.current
-    val rowHeight = ((widgetSize.height - 14.dp) / 2).coerceIn(34.dp, 64.dp)
+    val headerHeight = 12.dp
+    val rowHeight = ((widgetSize.height - 14.dp - headerHeight) / 2).coerceIn(30.dp, 58.dp)
     Column(
         modifier = GlanceModifier
             .fillMaxSize()
@@ -78,17 +80,52 @@ private fun WeatherWidgetContent(items: List<LocationForecast>) {
         when (items.size) {
             0 -> EmptyWidgetText("Tap to choose locations", context, 0)
             1 -> {
+                WidgetLabelRow(items[0].forecast)
                 WeatherWidgetRow(items[0], context, rowHeight)
                 Spacer(GlanceModifier.height(2.dp))
                 EmptyWidgetText("Add second location", context, items[0].location.id, rowHeight)
             }
             else -> {
+                WidgetLabelRow(items[0].forecast ?: items[1].forecast)
                 WeatherWidgetRow(items[0], context, rowHeight)
                 Spacer(GlanceModifier.height(2.dp))
                 WeatherWidgetRow(items[1], context, rowHeight)
             }
         }
     }
+}
+
+@Composable
+private fun WidgetLabelRow(forecast: Forecast?) {
+    Row(
+        modifier = GlanceModifier
+            .fillMaxWidth()
+            .height(12.dp),
+        verticalAlignment = Alignment.Vertical.CenterVertically
+    ) {
+        Spacer(GlanceModifier.width(96.dp))
+        HeaderCell("Now", 60.dp)
+        forecast?.daily?.take(3)?.forEachIndexed { index, day ->
+            HeaderCell(
+                when (index) {
+                    0 -> "Today"
+                    else -> day.date.format(DateTimeFormatter.ofPattern("EEE"))
+                },
+                68.dp
+            )
+        } ?: repeat(3) { index ->
+            HeaderCell(if (index == 0) "Today" else "-", 68.dp)
+        }
+    }
+}
+
+@Composable
+private fun HeaderCell(text: String, width: androidx.compose.ui.unit.Dp) {
+    Text(
+        text = text,
+        modifier = GlanceModifier.width(width),
+        style = TextStyle(fontSize = 9.sp, color = ColorProvider(Color(0xFFC5D8DE)))
+    )
 }
 
 @Composable
@@ -123,7 +160,7 @@ private fun WeatherWidgetRow(item: LocationForecast, context: Context, rowHeight
 @Composable
 private fun CurrentCell(forecast: Forecast) {
     Row(
-        modifier = GlanceModifier.width(58.dp),
+        modifier = GlanceModifier.width(60.dp),
         verticalAlignment = Alignment.Vertical.CenterVertically
     ) {
         WeatherImage(forecast.current.weatherCode)
@@ -137,7 +174,7 @@ private fun CurrentCell(forecast: Forecast) {
 @Composable
 private fun DailyCell(day: DailyForecast) {
     Row(
-        modifier = GlanceModifier.width(66.dp),
+        modifier = GlanceModifier.width(68.dp),
         verticalAlignment = Alignment.Vertical.CenterVertically
     ) {
         WeatherImage(day.weatherCode)

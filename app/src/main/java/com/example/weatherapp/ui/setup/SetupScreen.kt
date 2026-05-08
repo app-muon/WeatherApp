@@ -9,11 +9,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
@@ -22,21 +24,35 @@ fun SetupScreen(viewModel: SetupViewModel) {
     val state by viewModel.state
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-            FilterChip(
-                selected = state.targetLocationId == null,
-                onClick = viewModel::selectAddNew,
-                label = { Text("Add new") }
-            )
-            state.locations.forEachIndexed { index, location ->
-                FilterChip(
-                    selected = state.targetLocationId == location.id,
-                    onClick = { viewModel.selectReplacement(location.id) },
-                    label = { Text("Replace ${index + 1}: ${location.name}") }
-                )
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Add new", style = MaterialTheme.typography.titleMedium)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.horizontalScroll(rememberScrollState())
+            ) {
+                state.locations.forEachIndexed { index, location ->
+                    val isSelected = state.targetLocationId == location.id
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = {
+                            if (isSelected) {
+                                viewModel.selectAddNew()
+                            } else {
+                                viewModel.selectReplacement(location.id)
+                            }
+                        },
+                        label = { Text("Replace ${index + 1}: ${location.name}") },
+                        colors = selectedChipColors(),
+                        border = selectedChipBorder(isSelected)
+                    )
+                }
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
             OutlinedTextField(
                 value = state.query,
                 onValueChange = viewModel::updateQuery,
@@ -78,3 +94,21 @@ fun SetupScreen(viewModel: SetupViewModel) {
         }
     }
 }
+
+@Composable
+private fun selectedChipColors() = FilterChipDefaults.filterChipColors(
+    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+    labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+)
+
+@Composable
+private fun selectedChipBorder(isSelected: Boolean) = FilterChipDefaults.filterChipBorder(
+    enabled = true,
+    selected = isSelected,
+    borderColor = MaterialTheme.colorScheme.surfaceVariant,
+    selectedBorderColor = MaterialTheme.colorScheme.primary,
+    borderWidth = 1.dp,
+    selectedBorderWidth = 2.dp
+)

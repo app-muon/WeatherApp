@@ -11,19 +11,21 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
@@ -31,12 +33,16 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.ViewModel
@@ -44,6 +50,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.weatherapp.ui.forecast.ForecastScreen
 import com.example.weatherapp.ui.forecast.ForecastViewModel
+import com.example.weatherapp.ui.forecast.ForecastUiState
+import com.example.weatherapp.ui.forecast.WidgetSelectionSection
 import com.example.weatherapp.ui.setup.SetupScreen
 import com.example.weatherapp.ui.setup.SetupViewModel
 import com.example.weatherapp.ui.widget.updateWeatherWidgets
@@ -174,14 +182,15 @@ private fun WeatherRoot(
 ) {
     val state by forecastViewModel.state
     val context = androidx.compose.ui.platform.LocalContext.current
+    var page by remember { mutableStateOf(AppPage.Forecasts) }
 
     LaunchedEffect(state.items.map { it.location.id to it.forecast?.fetchedAt }) {
         updateWeatherWidgets(context)
     }
 
     PullToRefreshBox(
-        isRefreshing = state.isRefreshing,
-        onRefresh = forecastViewModel::refreshSelected,
+        isRefreshing = page == AppPage.Forecasts && state.isRefreshing,
+        onRefresh = { if (page == AppPage.Forecasts) forecastViewModel.refreshSelected() },
         modifier = Modifier
             .fillMaxSize()
             .padding(padding)
@@ -191,48 +200,102 @@ private fun WeatherRoot(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            if (state.items.size < 2) {
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = if (state.items.isEmpty()) "Choose two locations" else "Add a second location",
-                            style = MaterialTheme.typography.headlineSmall
-                        )
-                        SetupScreen(viewModel = setupViewModel)
-                    }
-                }
+            item {
+                AppPageTabs(page = page, onSelectPage = { page = it })
             }
-
-            if (state.items.isNotEmpty()) {
-                item {
-                    Row(modifier = Modifier.fillMaxWidth()) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Forecast", style = MaterialTheme.typography.headlineSmall)
-                            state.refreshMessage?.let {
-                                Spacer(Modifier.height(4.dp))
-                                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
-                            }
+            when (page) {
+                AppPage.Forecasts -> {
+                    item {
+                        ForecastsPageHeader(
+                            state = state,
+                            onRefresh = forecastViewModel::refreshSelected
+                        )
+                    }
+                    if (state.items.isNotEmpty()) {
+                        item {
+                            ForecastScreen(
+                                state = state,
+                                onSelectLocation = forecastViewModel::selectLocation,
+                                onRefresh = forecastViewModel::refreshSelected,
+                                onExpandDay = forecastViewModel::toggleExpandedDay
+                            )
                         }
                     }
                 }
-                item {
-                    ForecastScreen(
-                        state = state,
-                        onSelectLocation = forecastViewModel::selectLocation,
-                        onSetWidgetLocation = forecastViewModel::setWidgetLocation,
-                        onRefresh = forecastViewModel::refreshSelected,
-                        onExpandDay = forecastViewModel::toggleExpandedDay
-                    )
-                }
-            }
-            if (state.items.size >= 2) {
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Manage locations", style = MaterialTheme.typography.titleLarge)
-                        SetupScreen(viewModel = setupViewModel)
+                AppPage.Locations -> {
+                    item {
+                        LocationsPage(
+                            state = state,
+                            setupViewModel = setupViewModel,
+                            onSetWidgetLocation = forecastViewModel::setWidgetLocation
+                        )
                     }
                 }
             }
+        }
+    }
+}
+
+private enum class AppPage(val title: String) {
+    Forecasts("Forecasts"),
+    Locations("Locations")
+}
+
+@Composable
+private fun AppPageTabs(page: AppPage, onSelectPage: (AppPage) -> Unit) {
+    TabRow(selectedTabIndex = page.ordinal) {
+        AppPage.entries.forEach { item ->
+            Tab(
+                selected = page == item,
+                onClick = { onSelectPage(item) },
+                text = { Text(item.title) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun ForecastsPageHeader(state: ForecastUiState, onRefresh: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Forecasts", style = MaterialTheme.typography.headlineSmall)
+            IconButton(
+                onClick = onRefresh,
+                enabled = state.items.isNotEmpty() && !state.isRefreshing
+            ) {
+                Icon(
+                    painter = painterResource(com.example.weatherapp.R.drawable.ic_refresh),
+                    contentDescription = "Refresh forecasts"
+                )
+            }
+        }
+        if (state.items.isEmpty()) {
+            Text("Add a location on the Locations page to see the forecast.")
+        }
+        state.refreshMessage?.let {
+            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+        }
+    }
+}
+
+@Composable
+private fun LocationsPage(
+    state: ForecastUiState,
+    setupViewModel: SetupViewModel,
+    onSetWidgetLocation: (Long, Int) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text("Locations", style = MaterialTheme.typography.headlineSmall)
+        SetupScreen(viewModel = setupViewModel)
+        if (state.items.isNotEmpty()) {
+            WidgetSelectionSection(
+                state = state,
+                onSetWidgetLocation = onSetWidgetLocation
+            )
         }
     }
 }
