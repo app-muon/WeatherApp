@@ -44,15 +44,15 @@ interface LocationDao {
 
     @Transaction
     @Query("SELECT * FROM locations ORDER BY displayOrder ASC")
-    fun observeLocationsWithCache(): Flow<List<LocationWithForecastCache>>
+    fun observeLocationsWithCache(): Flow<List<LocationWithCaches>>
 
     @Transaction
     @Query("SELECT * FROM locations ORDER BY displayOrder ASC")
-    suspend fun getLocationsWithCache(): List<LocationWithForecastCache>
+    suspend fun getLocationsWithCache(): List<LocationWithCaches>
 
     @Transaction
     @Query("SELECT * FROM locations WHERE widgetOrder IS NOT NULL ORDER BY widgetOrder ASC LIMIT 2")
-    suspend fun getWidgetLocationsWithCache(): List<LocationWithForecastCache>
+    suspend fun getWidgetLocationsWithCache(): List<LocationWithCaches>
 }
 
 @Dao
@@ -61,5 +61,14 @@ interface ForecastCacheDao {
     suspend fun upsert(cache: ForecastCacheEntity)
 
     @Query("DELETE FROM forecast_cache WHERE locationId = :locationId")
+    suspend fun deleteForLocation(locationId: Long)
+}
+
+@Dao
+interface MarineCacheDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(cache: MarineCacheEntity)
+
+    @Query("DELETE FROM marine_cache WHERE locationId = :locationId")
     suspend fun deleteForLocation(locationId: Long)
 }

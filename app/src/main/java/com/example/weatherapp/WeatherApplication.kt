@@ -10,6 +10,7 @@ import com.example.weatherapp.data.db.WeatherDatabase
 import com.example.weatherapp.data.repository.LocationRepository
 import com.example.weatherapp.data.repository.WeatherRepository
 import com.example.weatherapp.domain.mapper.ForecastParser
+import com.example.weatherapp.domain.mapper.MarineParser
 import com.example.weatherapp.settings.WeatherSettingsRepository
 import com.example.weatherapp.worker.ForecastRefreshWorker
 import java.util.concurrent.TimeUnit
@@ -38,19 +39,24 @@ class WeatherApplication : Application() {
 class AppContainer(context: Context) {
     private val database = WeatherDatabase.getInstance(context)
     private val forecastParser = ForecastParser()
+    private val marineParser = MarineParser()
     val settingsRepository = WeatherSettingsRepository(context)
 
     val locationRepository = LocationRepository(
         locationDao = database.locationDao(),
         forecastCacheDao = database.forecastCacheDao(),
+        marineCacheDao = database.marineCacheDao(),
         geocodingApi = ApiModule.geocodingApi
     )
 
     val weatherRepository = WeatherRepository(
         locationDao = database.locationDao(),
         forecastCacheDao = database.forecastCacheDao(),
+        marineCacheDao = database.marineCacheDao(),
         weatherApi = ApiModule.weatherApi,
+        marineApi = ApiModule.marineApi,
         settingsRepository = settingsRepository,
-        forecastParser = forecastParser
+        forecastParser = forecastParser,
+        marineParser = marineParser
     )
 }

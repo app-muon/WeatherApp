@@ -39,8 +39,35 @@ data class ForecastCacheEntity(
     val rawJson: String
 )
 
+@Entity(
+    tableName = "marine_cache",
+    primaryKeys = ["locationId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = LocationEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["locationId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index("locationId")]
+)
+data class MarineCacheEntity(
+    val locationId: Long,
+    val fetchedAtEpochMillis: Long,
+    val rawJson: String
+)
+
 data class LocationWithForecastCache(
     @Embedded val location: LocationEntity,
     @Relation(parentColumn = "id", entityColumn = "locationId")
     val forecastCache: ForecastCacheEntity?
+)
+
+data class LocationWithCaches(
+    @Embedded val location: LocationEntity,
+    @Relation(entity = ForecastCacheEntity::class, parentColumn = "id", entityColumn = "locationId")
+    val forecastCache: ForecastCacheEntity?,
+    @Relation(entity = MarineCacheEntity::class, parentColumn = "id", entityColumn = "locationId")
+    val marineCache: MarineCacheEntity?
 )

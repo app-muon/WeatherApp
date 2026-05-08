@@ -2,6 +2,7 @@ package com.example.weatherapp.data.repository
 
 import com.example.weatherapp.data.api.GeocodingApiClient
 import com.example.weatherapp.data.api.GeocodingResult
+import com.example.weatherapp.data.db.MarineCacheDao
 import com.example.weatherapp.data.db.ForecastCacheDao
 import com.example.weatherapp.data.db.LocationDao
 import com.example.weatherapp.data.db.LocationEntity
@@ -10,6 +11,7 @@ import kotlinx.coroutines.flow.Flow
 class LocationRepository(
     private val locationDao: LocationDao,
     private val forecastCacheDao: ForecastCacheDao,
+    private val marineCacheDao: MarineCacheDao,
     private val geocodingApi: GeocodingApiClient
 ) {
     fun observeLocations(): Flow<List<LocationEntity>> = locationDao.observeLocations()
@@ -38,6 +40,7 @@ class LocationRepository(
         )
         val locationId = existing?.id ?: id
         forecastCacheDao.deleteForLocation(locationId)
+        marineCacheDao.deleteForLocation(locationId)
         return locationId
     }
 

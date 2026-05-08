@@ -33,6 +33,9 @@ object ApiModule {
 
     val weatherApi: WeatherApiClient = retrofit("https://api.open-meteo.com/")
         .create(WeatherApiClient::class.java)
+
+    val marineApi: MarineApiClient = retrofit("https://marine-api.open-meteo.com/")
+        .create(MarineApiClient::class.java)
 }
 
 interface GeocodingApiClient {
@@ -61,6 +64,16 @@ interface WeatherApiClient {
     ): JsonObject
 }
 
+interface MarineApiClient {
+    @GET("v1/marine")
+    suspend fun marine(
+        @Query("latitude") latitude: Double,
+        @Query("longitude") longitude: Double,
+        @Query("hourly") hourly: String = MarineApiFields.HOURLY,
+        @Query("timezone") timezone: String = "auto"
+    ): JsonObject
+}
+
 object WeatherApiFields {
     const val CURRENT =
         "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,rain,weather_code,cloud_cover,pressure_msl,wind_speed_10m,wind_direction_10m"
@@ -68,6 +81,10 @@ object WeatherApiFields {
         "temperature_2m,apparent_temperature,relative_humidity_2m,precipitation_probability,precipitation,rain,weather_code,cloud_cover,pressure_msl,visibility,wind_speed_10m,wind_direction_10m,uv_index"
     const val DAILY =
         "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,rain_sum,wind_speed_10m_max,wind_direction_10m_dominant,sunrise,sunset,uv_index_max"
+}
+
+object MarineApiFields {
+    const val HOURLY = "sea_surface_temperature,wave_height,wave_direction,wave_period"
 }
 
 data class GeocodingResponse(

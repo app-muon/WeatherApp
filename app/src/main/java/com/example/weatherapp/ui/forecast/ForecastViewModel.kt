@@ -9,6 +9,7 @@ import com.example.weatherapp.data.repository.LocationForecast
 import com.example.weatherapp.data.repository.WeatherRepository
 import com.example.weatherapp.settings.WeatherSettings
 import com.example.weatherapp.settings.WeatherSettingsRepository
+import com.example.weatherapp.domain.model.MarineConditions
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 
@@ -22,6 +23,8 @@ data class ForecastUiState(
 ) {
     val selected: LocationForecast?
         get() = items.firstOrNull { it.location.id == selectedLocationId } ?: items.firstOrNull()
+    val marineConditions: MarineConditions?
+        get() = selected?.marineConditions
 }
 
 class ForecastViewModel(

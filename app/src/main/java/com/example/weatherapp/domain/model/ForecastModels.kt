@@ -58,6 +58,14 @@ data class Forecast(
     val daily: List<DailyForecast>
 )
 
+data class MarineConditions(
+    val time: ZonedDateTime,
+    val seaSurfaceTemperature: Double?,
+    val waveHeight: Double?,
+    val waveDirection: Int?,
+    val wavePeriod: Double?
+)
+
 data class WeatherCondition(
     val code: Int,
     val label: String,
@@ -73,4 +81,3 @@ enum class WeatherIcon {
     Snow,
     Thunderstorm
 }
-
