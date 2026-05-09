@@ -30,6 +30,7 @@ class LocationRepository(
                 id = existing?.id ?: 0,
                 name = result.name,
                 country = result.country,
+                countryCode = result.countryCode,
                 adminArea = result.admin1,
                 latitude = result.latitude,
                 longitude = result.longitude,
@@ -49,5 +50,9 @@ class LocationRepository(
         locationDao.clearWidgetOrderForLocation(locationId)
         locationDao.clearWidgetOrder(widgetOrder)
         locationDao.setWidgetOrder(locationId, widgetOrder)
+    }
+
+    suspend fun deleteLocation(locationId: Long) {
+        locationDao.deleteById(locationId)
     }
 }

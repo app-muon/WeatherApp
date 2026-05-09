@@ -1,7 +1,16 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
+}
+
+val localProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) {
+        file.inputStream().use { input -> load(input) }
+    }
 }
 
 android {
@@ -22,6 +31,17 @@ android {
         ksp {
             arg("room.schemaLocation", "$projectDir/schemas")
         }
+
+        buildConfigField(
+            "String",
+            "MET_OFFICE_API_KEY",
+            "\"${localProperties.getProperty("MET_OFFICE_API_KEY", "")}\""
+        )
+        buildConfigField(
+            "String",
+            "AEMET_API_KEY",
+            "\"${localProperties.getProperty("AEMET_API_KEY", "")}\""
+        )
     }
 
     buildTypes {

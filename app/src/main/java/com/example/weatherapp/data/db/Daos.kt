@@ -24,6 +24,9 @@ interface LocationDao {
     @Query("SELECT * FROM locations WHERE id = :id LIMIT 1")
     suspend fun getById(id: Long): LocationEntity?
 
+    @Query("DELETE FROM locations WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
     @Query("SELECT COALESCE(MAX(displayOrder), -1) FROM locations")
     suspend fun getMaxDisplayOrder(): Int
 
@@ -62,6 +65,36 @@ interface ForecastCacheDao {
 
     @Query("DELETE FROM forecast_cache WHERE locationId = :locationId")
     suspend fun deleteForLocation(locationId: Long)
+
+    @Query("SELECT * FROM forecast_cache WHERE locationId = :locationId AND providerId = :providerId LIMIT 1")
+    suspend fun get(locationId: Long, providerId: String): ForecastCacheEntity?
+}
+
+@Dao
+interface ProviderStatusDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(status: ProviderStatusEntity)
+
+    @Query("SELECT * FROM provider_status WHERE locationId = :locationId AND providerId = :providerId LIMIT 1")
+    suspend fun get(locationId: Long, providerId: String): ProviderStatusEntity?
+}
+
+@Dao
+interface WidgetSourcePreferenceDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(preference: WidgetSourcePreferenceEntity)
+
+    @Query("SELECT * FROM widget_source_preferences WHERE locationId = :locationId LIMIT 1")
+    suspend fun get(locationId: Long): WidgetSourcePreferenceEntity?
+}
+
+@Dao
+interface ForecastSourcePreferenceDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(preference: ForecastSourcePreferenceEntity)
+
+    @Query("SELECT * FROM forecast_source_preferences WHERE locationId = :locationId LIMIT 1")
+    suspend fun get(locationId: Long): ForecastSourcePreferenceEntity?
 }
 
 @Dao

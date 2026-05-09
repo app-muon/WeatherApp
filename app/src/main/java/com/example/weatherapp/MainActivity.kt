@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
@@ -49,6 +50,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.weatherapp.ui.forecast.ForecastScreen
+import com.example.weatherapp.ui.forecast.ForecastSourceSection
 import com.example.weatherapp.ui.forecast.ForecastViewModel
 import com.example.weatherapp.ui.forecast.ForecastUiState
 import com.example.weatherapp.ui.forecast.WidgetSelectionSection
@@ -188,47 +190,61 @@ private fun WeatherRoot(
         updateWeatherWidgets(context)
     }
 
-    PullToRefreshBox(
-        isRefreshing = page == AppPage.Forecasts && state.isRefreshing,
-        onRefresh = { if (page == AppPage.Forecasts) forecastViewModel.refreshSelected() },
+    Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(padding)
     ) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+        AppPageBar(
+            page = page,
+            showRefresh = page == AppPage.Forecasts,
+            refreshEnabled = state.items.isNotEmpty() && !state.isRefreshing,
+            onSelectPage = { page = it },
+            onRefresh = forecastViewModel::refreshSelected
+        )
+        PullToRefreshBox(
+            isRefreshing = page == AppPage.Forecasts && state.isRefreshing,
+            onRefresh = { if (page == AppPage.Forecasts) forecastViewModel.refreshSelected() },
+            modifier = Modifier.fillMaxSize()
         ) {
-            item {
-                AppPageTabs(page = page, onSelectPage = { page = it })
-            }
-            when (page) {
-                AppPage.Forecasts -> {
-                    item {
-                        ForecastsPageHeader(
-                            state = state,
-                            onRefresh = forecastViewModel::refreshSelected
-                        )
-                    }
-                    if (state.items.isNotEmpty()) {
-                        item {
-                            ForecastScreen(
-                                state = state,
-                                onSelectLocation = forecastViewModel::selectLocation,
-                                onRefresh = forecastViewModel::refreshSelected,
-                                onExpandDay = forecastViewModel::toggleExpandedDay
-                            )
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                when (page) {
+                    AppPage.Forecasts -> {
+                        if (state.items.isEmpty() || state.refreshMessage != null) {
+                            item {
+                                ForecastStatus(
+                                    isEmpty = state.items.isEmpty(),
+                                    refreshMessage = state.refreshMessage
+                                )
+                            }
+                        }
+                        if (state.items.isNotEmpty()) {
+                            item {
+                                ForecastScreen(
+                                    state = state,
+                                    onSelectLocation = forecastViewModel::selectLocation,
+                                    onSelectComparisonDay = forecastViewModel::selectComparisonDay,
+                                    onOpenCompare = forecastViewModel::refreshComparisonForSelected,
+                                    onRefresh = forecastViewModel::refreshSelected,
+                                    onExpandDay = forecastViewModel::toggleExpandedDay
+                                )
+                            }
                         }
                     }
-                }
-                AppPage.Locations -> {
-                    item {
-                        LocationsPage(
-                            state = state,
-                            setupViewModel = setupViewModel,
-                            onSetWidgetLocation = forecastViewModel::setWidgetLocation
-                        )
+                    AppPage.Locations -> {
+                        item {
+                            LocationsPage(
+                                state = state,
+                                setupViewModel = setupViewModel,
+                                onSetWidgetLocation = forecastViewModel::setWidgetLocation,
+                                onSetWidgetSource = forecastViewModel::setWidgetSource,
+                                onSetForecastSource = forecastViewModel::setForecastSource
+                            )
+                        }
                     }
                 }
             }
@@ -242,8 +258,52 @@ private enum class AppPage(val title: String) {
 }
 
 @Composable
-private fun AppPageTabs(page: AppPage, onSelectPage: (AppPage) -> Unit) {
-    TabRow(selectedTabIndex = page.ordinal) {
+private fun ForecastStatus(isEmpty: Boolean, refreshMessage: String?) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (isEmpty) {
+            Text("Add a location on the Locations page to see the forecast.")
+        }
+        refreshMessage?.let {
+            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+        }
+    }
+}
+
+@Composable
+private fun AppPageBar(
+    page: AppPage,
+    showRefresh: Boolean,
+    refreshEnabled: Boolean,
+    onSelectPage: (AppPage) -> Unit,
+    onRefresh: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        AppPageTabs(
+            page = page,
+            onSelectPage = onSelectPage,
+            modifier = Modifier.weight(1f)
+        )
+        IconButton(
+            onClick = onRefresh,
+            enabled = showRefresh && refreshEnabled,
+            modifier = Modifier.width(48.dp)
+        ) {
+            Icon(
+                painter = painterResource(com.example.weatherapp.R.drawable.ic_refresh),
+                contentDescription = "Refresh forecasts"
+            )
+        }
+    }
+}
+
+@Composable
+private fun AppPageTabs(page: AppPage, onSelectPage: (AppPage) -> Unit, modifier: Modifier = Modifier) {
+    TabRow(selectedTabIndex = page.ordinal, modifier = modifier) {
         AppPage.entries.forEach { item ->
             Tab(
                 selected = page == item,
@@ -255,46 +315,24 @@ private fun AppPageTabs(page: AppPage, onSelectPage: (AppPage) -> Unit) {
 }
 
 @Composable
-private fun ForecastsPageHeader(state: ForecastUiState, onRefresh: () -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Forecasts", style = MaterialTheme.typography.headlineSmall)
-            IconButton(
-                onClick = onRefresh,
-                enabled = state.items.isNotEmpty() && !state.isRefreshing
-            ) {
-                Icon(
-                    painter = painterResource(com.example.weatherapp.R.drawable.ic_refresh),
-                    contentDescription = "Refresh forecasts"
-                )
-            }
-        }
-        if (state.items.isEmpty()) {
-            Text("Add a location on the Locations page to see the forecast.")
-        }
-        state.refreshMessage?.let {
-            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
-        }
-    }
-}
-
-@Composable
 private fun LocationsPage(
     state: ForecastUiState,
     setupViewModel: SetupViewModel,
-    onSetWidgetLocation: (Long, Int) -> Unit
+    onSetWidgetLocation: (Long, Int) -> Unit,
+    onSetWidgetSource: (Long, String) -> Unit,
+    onSetForecastSource: (Long, String) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Text("Locations", style = MaterialTheme.typography.headlineSmall)
         SetupScreen(viewModel = setupViewModel)
         if (state.items.isNotEmpty()) {
+            ForecastSourceSection(
+                state = state,
+                onSetForecastSource = onSetForecastSource
+            )
             WidgetSelectionSection(
                 state = state,
-                onSetWidgetLocation = onSetWidgetLocation
+                onSetWidgetLocation = onSetWidgetLocation,
+                onSetWidgetSource = onSetWidgetSource
             )
         }
     }

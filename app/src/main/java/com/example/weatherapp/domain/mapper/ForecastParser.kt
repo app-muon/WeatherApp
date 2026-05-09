@@ -25,6 +25,8 @@ class ForecastParser {
         val daily = root.obj("daily")
 
         return Forecast(
+            providerId = "open_meteo",
+            providerName = "Open-Meteo",
             locationId = locationId,
             fetchedAt = fetchedAt,
             current = CurrentWeather(
@@ -41,7 +43,8 @@ class ForecastParser {
                 windDirection = current.int("wind_direction_10m")
             ),
             hourly = parseHourly(hourly, zone),
-            daily = parseDaily(daily, zone)
+            daily = parseDaily(daily, zone),
+            attribution = "Open-Meteo"
         )
     }
 
@@ -107,4 +110,3 @@ private fun JsonObject.intAtOrNull(name: String, index: Int): Int? =
     if (has(name) && !array(name)[index].isJsonNull) array(name)[index].asInt else null
 private fun JsonObject.stringAtOrNull(name: String, index: Int): String? =
     if (has(name) && !array(name)[index].isJsonNull) array(name)[index].asString else null
-

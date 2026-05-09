@@ -103,7 +103,7 @@ private fun WidgetLabelRow(forecast: Forecast?) {
             .height(12.dp),
         verticalAlignment = Alignment.Vertical.CenterVertically
     ) {
-        Spacer(GlanceModifier.width(96.dp))
+        Spacer(GlanceModifier.width(82.dp))
         HeaderCell("Now", 60.dp)
         forecast?.daily?.take(3)?.forEachIndexed { index, day ->
             HeaderCell(
@@ -140,7 +140,7 @@ private fun WeatherWidgetRow(item: LocationForecast, context: Context, rowHeight
     ) {
         Text(
             text = item.location.name.take(16),
-            modifier = GlanceModifier.width(96.dp),
+            modifier = GlanceModifier.width(82.dp),
             style = TextStyle(fontWeight = FontWeight.Bold, fontSize = 15.sp, color = ColorProvider(Color(0xFF00E5FF)))
         )
         if (forecast == null) {
@@ -163,9 +163,9 @@ private fun CurrentCell(forecast: Forecast) {
         modifier = GlanceModifier.width(60.dp),
         verticalAlignment = Alignment.Vertical.CenterVertically
     ) {
-        WeatherImage(forecast.current.weatherCode)
+        WeatherImage(forecast.current?.weatherCode ?: 0)
         Text(
-            text = forecast.current.temperature.temp(),
+            text = forecast.current?.temperature.temp(),
             style = TextStyle(fontWeight = FontWeight.Medium, fontSize = 14.sp, color = ColorProvider(Color(0xFFE8F7FF)))
         )
     }
@@ -177,7 +177,7 @@ private fun DailyCell(day: DailyForecast) {
         modifier = GlanceModifier.width(68.dp),
         verticalAlignment = Alignment.Vertical.CenterVertically
     ) {
-        WeatherImage(day.weatherCode)
+        WeatherImage(day.weatherCode ?: 0)
         Text(
             text = "${day.tempMin.temp()}/${day.tempMax.temp()}",
             style = TextStyle(fontWeight = FontWeight.Medium, fontSize = 13.sp, color = ColorProvider(Color(0xFFE8F7FF)))
@@ -222,7 +222,7 @@ private fun openAppAction(context: Context, locationId: Long) =
 private fun isStale(forecast: Forecast): Boolean =
     Instant.now().toEpochMilli() - forecast.fetchedAt.toEpochMilli() > WeatherRepository.STALE_AFTER_MILLIS
 
-private fun Double.temp(): String = "${roundToInt()}\u00B0"
+private fun Double?.temp(): String = this?.let { "${it.roundToInt()}\u00B0" } ?: "\u2014"
 
 suspend fun updateWeatherWidgets(context: Context) {
     WeatherWidget().updateAll(context)

@@ -10,6 +10,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -17,7 +19,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import com.example.weatherapp.R
 
 @Composable
 fun SetupScreen(viewModel: SetupViewModel) {
@@ -25,26 +29,34 @@ fun SetupScreen(viewModel: SetupViewModel) {
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("Add new", style = MaterialTheme.typography.titleMedium)
             Row(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.horizontalScroll(rememberScrollState())
             ) {
                 state.locations.forEachIndexed { index, location ->
                     val isSelected = state.targetLocationId == location.id
-                    FilterChip(
-                        selected = isSelected,
-                        onClick = {
-                            if (isSelected) {
-                                viewModel.selectAddNew()
-                            } else {
-                                viewModel.selectReplacement(location.id)
-                            }
-                        },
-                        label = { Text("Replace ${index + 1}: ${location.name}") },
-                        colors = selectedChipColors(),
-                        border = selectedChipBorder(isSelected)
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = {
+                                if (isSelected) {
+                                    viewModel.selectAddNew()
+                                } else {
+                                    viewModel.selectReplacement(location.id)
+                                }
+                            },
+                            label = { Text("${index + 1}: ${location.name}") },
+                            colors = selectedChipColors(),
+                            border = selectedChipBorder(isSelected)
+                        )
+                        IconButton(onClick = { viewModel.deleteLocation(location.id) }) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_delete),
+                                contentDescription = "Delete ${location.name}",
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -56,7 +68,7 @@ fun SetupScreen(viewModel: SetupViewModel) {
             OutlinedTextField(
                 value = state.query,
                 onValueChange = viewModel::updateQuery,
-                label = { Text("Search city or place") },
+                label = { Text("Add new city or place") },
                 singleLine = true,
                 modifier = Modifier.weight(1f)
             )

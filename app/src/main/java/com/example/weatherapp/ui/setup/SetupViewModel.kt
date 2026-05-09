@@ -65,11 +65,24 @@ class SetupViewModel(
         viewModelScope.launch {
             val targetLocationId = _state.value.targetLocationId
             val locationId = locationRepository.saveLocation(targetLocationId, result)
+            weatherRepository.initDefaultForecastSource(locationId)
             weatherRepository.refreshLocation(locationId)
             _state.value = _state.value.copy(
                 query = "",
                 results = emptyList(),
                 message = if (targetLocationId == null) "${result.name} added" else "${result.name} replaced",
+                messageIsError = false
+            )
+        }
+    }
+
+    fun deleteLocation(locationId: Long) {
+        viewModelScope.launch {
+            val location = _state.value.locations.firstOrNull { it.id == locationId }
+            locationRepository.deleteLocation(locationId)
+            _state.value = _state.value.copy(
+                targetLocationId = _state.value.targetLocationId?.takeIf { it != locationId },
+                message = location?.let { "${it.name} deleted" },
                 messageIsError = false
             )
         }

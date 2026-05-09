@@ -1,13 +1,16 @@
 package com.example.weatherapp.data.api
 
 import com.example.weatherapp.BuildConfig
+import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.GET
+import retrofit2.http.Header
 import retrofit2.http.Query
+import retrofit2.http.Url
 
 object ApiModule {
     private val client = OkHttpClient.Builder()
@@ -36,6 +39,15 @@ object ApiModule {
 
     val marineApi: MarineApiClient = retrofit("https://marine-api.open-meteo.com/")
         .create(MarineApiClient::class.java)
+
+    val metNorwayApi: MetNorwayApiClient = retrofit("https://api.met.no/")
+        .create(MetNorwayApiClient::class.java)
+
+    val metOfficeApi: MetOfficeApiClient = retrofit("https://data.hub.api.metoffice.gov.uk/")
+        .create(MetOfficeApiClient::class.java)
+
+    val aemetApi: AemetApiClient = retrofit("https://opendata.aemet.es/")
+        .create(AemetApiClient::class.java)
 }
 
 interface GeocodingApiClient {
@@ -74,6 +86,37 @@ interface MarineApiClient {
     ): JsonObject
 }
 
+interface MetNorwayApiClient {
+    @GET("weatherapi/locationforecast/2.0/compact")
+    suspend fun forecast(
+        @Query("lat") latitude: Double,
+        @Query("lon") longitude: Double,
+        @Header("User-Agent") userAgent: String = "WeatherApp/1.0 app-muon"
+    ): JsonObject
+}
+
+interface MetOfficeApiClient {
+    @GET
+    suspend fun pointForecast(
+        @Url url: String,
+        @Header("apikey") apiKey: String,
+        @Header("accept") accept: String = "application/json"
+    ): JsonObject
+}
+
+interface AemetApiClient {
+    @GET
+    suspend fun request(
+        @Url url: String,
+        @Query("api_key") apiKey: String
+    ): JsonObject
+
+    @GET
+    suspend fun data(
+        @Url url: String
+    ): JsonElement
+}
+
 object WeatherApiFields {
     const val CURRENT =
         "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,rain,weather_code,cloud_cover,pressure_msl,wind_speed_10m,wind_direction_10m"
@@ -97,6 +140,8 @@ data class GeocodingResult(
     val latitude: Double,
     val longitude: Double,
     val country: String?,
+    @com.google.gson.annotations.SerializedName("country_code")
+    val countryCode: String?,
     val admin1: String?,
     val timezone: String?
 )
