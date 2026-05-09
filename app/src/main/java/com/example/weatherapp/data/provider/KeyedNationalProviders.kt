@@ -23,6 +23,8 @@ import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class MetOfficeProvider(
     private val api: MetOfficeApiClient,
@@ -83,7 +85,8 @@ class AemetProvider(
     private val apiKey: String,
     private val gson: Gson
 ) : WeatherProvider {
-    @Volatile private var municipalityCache: List<AemetMunicipality>? = null
+    private val municipalityMutex = Mutex()
+    private var municipalityCache: List<AemetMunicipality>? = null
     override val id = WeatherProviderIds.AEMET
     override val displayName = "AEMET"
     override val shortName = "AEMET"
@@ -122,21 +125,24 @@ class AemetProvider(
     }
 
     private suspend fun findNearestMunicipality(location: LocationEntity): AemetMunicipality {
-        val municipalities = municipalityCache ?: run {
-            val payload = aemetPayload("opendata/api/maestro/municipios")
-            val list = payload.asArray().mapNotNull { element ->
-                val obj = element.asObjectOrNull() ?: return@mapNotNull null
-                val id = obj.stringOrNull("id") ?: return@mapNotNull null
-                val forecastCode = id.filter { it.isDigit() }.takeLast(5).padStart(5, '0')
-                    .takeIf { it.length == 5 } ?: return@mapNotNull null
-                val name = obj.stringOrNull("nombre") ?: obj.stringOrNull("capital") ?: id
-                val lat = obj.doubleOrNull("latitud_dec") ?: return@mapNotNull null
-                val lon = obj.doubleOrNull("longitud_dec") ?: return@mapNotNull null
-                AemetMunicipality(id = id, forecastCode = forecastCode, name = name, latitude = lat, longitude = lon)
+        val municipalities = municipalityMutex.withLock { municipalityCache }
+            ?: municipalityMutex.withLock {
+                municipalityCache ?: run {
+                    val payload = aemetPayload("opendata/api/maestro/municipios")
+                    val list = payload.asArray().mapNotNull { element ->
+                        val obj = element.asObjectOrNull() ?: return@mapNotNull null
+                        val id = obj.stringOrNull("id") ?: return@mapNotNull null
+                        val forecastCode = id.filter { it.isDigit() }.takeLast(5).padStart(5, '0')
+                            .takeIf { it.length == 5 } ?: return@mapNotNull null
+                        val name = obj.stringOrNull("nombre") ?: obj.stringOrNull("capital") ?: id
+                        val lat = obj.doubleOrNull("latitud_dec") ?: return@mapNotNull null
+                        val lon = obj.doubleOrNull("longitud_dec") ?: return@mapNotNull null
+                        AemetMunicipality(id = id, forecastCode = forecastCode, name = name, latitude = lat, longitude = lon)
+                    }
+                    municipalityCache = list
+                    list
+                }
             }
-            municipalityCache = list
-            list
-        }
         return municipalities.minByOrNull { it.distanceTo(location.latitude, location.longitude) }
             ?: throw IllegalStateException("AEMET municipality list was empty")
     }
