@@ -71,11 +71,6 @@ data class ProviderStatus(
     val lastError: String?
 )
 
-data class WidgetSourcePreference(
-    val locationId: Long,
-    val selectedProviderId: String
-)
-
 data class ForecastSourcePreference(
     val locationId: Long,
     val selectedProviderId: String

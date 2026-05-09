@@ -143,14 +143,12 @@ fun ForecastScreen(
 @Composable
 fun WidgetSelectionSection(
     state: ForecastUiState,
-    onSetWidgetLocation: (Long, Int) -> Unit,
-    onSetWidgetSource: (Long, String) -> Unit
+    onSetWidgetLocation: (Long, Int) -> Unit
 ) {
     Card {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Widget", style = MaterialTheme.typography.titleMedium)
             repeat(2) { slot ->
-                val selectedItem = state.items.firstOrNull { it.location.widgetOrder == slot }
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("Row ${slot + 1}", style = MaterialTheme.typography.labelLarge)
                     Row(
@@ -166,24 +164,6 @@ fun WidgetSelectionSection(
                                 colors = selectedChipColors(),
                                 border = selectedChipBorder(isSelected)
                             )
-                        }
-                    }
-                    if (selectedItem != null) {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.horizontalScroll(rememberScrollState())
-                        ) {
-                            val selectedProvider = selectedItem.widgetSourcePreference?.selectedProviderId ?: WeatherProviderIds.AUTO
-                            state.providerOptions[selectedItem.location.id].orEmpty().forEach { option ->
-                                val isSelected = selectedProvider == option.id
-                                FilterChip(
-                                    selected = isSelected,
-                                    onClick = { onSetWidgetSource(selectedItem.location.id, option.id) },
-                                    label = { Text(option.displayName) },
-                                    colors = selectedChipColors(),
-                                    border = selectedChipBorder(isSelected)
-                                )
-                            }
                         }
                     }
                 }

@@ -241,7 +241,6 @@ private fun WeatherRoot(
                                 state = state,
                                 setupViewModel = setupViewModel,
                                 onSetWidgetLocation = forecastViewModel::setWidgetLocation,
-                                onSetWidgetSource = forecastViewModel::setWidgetSource,
                                 onSetForecastSource = forecastViewModel::setForecastSource
                             )
                         }
@@ -319,7 +318,6 @@ private fun LocationsPage(
     state: ForecastUiState,
     setupViewModel: SetupViewModel,
     onSetWidgetLocation: (Long, Int) -> Unit,
-    onSetWidgetSource: (Long, String) -> Unit,
     onSetForecastSource: (Long, String) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -331,8 +329,7 @@ private fun LocationsPage(
             )
             WidgetSelectionSection(
                 state = state,
-                onSetWidgetLocation = onSetWidgetLocation,
-                onSetWidgetSource = onSetWidgetSource
+                onSetWidgetLocation = onSetWidgetLocation
             )
         }
     }

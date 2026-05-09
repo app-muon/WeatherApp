@@ -14,6 +14,8 @@ interface WeatherProvider {
     val id: String
     val displayName: String
     val shortName: String
+    val isConfigured: Boolean
+        get() = true
 
     suspend fun isAvailableFor(location: LocationEntity): Boolean
 

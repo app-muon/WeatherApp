@@ -134,12 +134,6 @@ class ForecastViewModel(
         }
     }
 
-    fun setWidgetSource(locationId: Long, providerId: String) {
-        viewModelScope.launch {
-            weatherRepository.setWidgetSource(locationId, providerId)
-        }
-    }
-
     fun setForecastSource(locationId: Long, providerId: String) {
         viewModelScope.launch {
             weatherRepository.setForecastSource(locationId, providerId)

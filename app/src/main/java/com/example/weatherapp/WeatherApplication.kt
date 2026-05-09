@@ -67,7 +67,6 @@ class AppContainer(context: Context) {
         locationDao = database.locationDao(),
         forecastCacheDao = database.forecastCacheDao(),
         providerStatusDao = database.providerStatusDao(),
-        widgetSourcePreferenceDao = database.widgetSourcePreferenceDao(),
         forecastSourcePreferenceDao = database.forecastSourcePreferenceDao(),
         marineCacheDao = database.marineCacheDao(),
         marineApi = ApiModule.marineApi,

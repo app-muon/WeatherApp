@@ -95,7 +95,7 @@ After installing:
 
 1. Add up to two locations in the app.
 2. Open `Locations`.
-3. Choose widget rows and widget source per location.
+3. Choose the two widget rows. The widget uses each location's default forecast source.
 4. Add the Weather widget to the home screen.
 
 The widget renders from Room cache only. Open the app or wait for WorkManager refresh to populate/update cached forecasts.
@@ -109,12 +109,4 @@ The app compares available providers for the selected location:
 - Met Office, when configured and available
 - AEMET, when configured and available
 
-Widget source can be set per location:
-
-- Auto
-- Open-Meteo
-- Yr / MET Norway
-- Met Office, UK/key only
-- AEMET, Spain/key only
-
-Auto prefers national providers where available, then falls back to Open-Meteo and MET Norway.
+The widget uses the same default source selected for each location. Auto prefers national providers where available, then falls back to Open-Meteo and MET Norway.

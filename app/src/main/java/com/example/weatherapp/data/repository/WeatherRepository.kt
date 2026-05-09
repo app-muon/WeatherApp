@@ -12,8 +12,6 @@ import com.example.weatherapp.data.db.LocationDao
 import com.example.weatherapp.data.db.LocationEntity
 import com.example.weatherapp.data.db.ProviderStatusDao
 import com.example.weatherapp.data.db.ProviderStatusEntity
-import com.example.weatherapp.data.db.WidgetSourcePreferenceDao
-import com.example.weatherapp.data.db.WidgetSourcePreferenceEntity
 import com.example.weatherapp.data.provider.WeatherProvider
 import com.example.weatherapp.data.provider.WeatherProviderIds
 import com.example.weatherapp.data.provider.countryCodeOrName
@@ -25,7 +23,6 @@ import com.example.weatherapp.domain.model.ForecastSourcePreference
 import com.example.weatherapp.domain.model.ProviderForecast
 import com.example.weatherapp.domain.model.ProviderStatus
 import com.example.weatherapp.domain.model.WeatherUnits
-import com.example.weatherapp.domain.model.WidgetSourcePreference
 import com.example.weatherapp.settings.WeatherSettingsRepository
 import com.example.weatherapp.worker.ForecastRefreshWorker
 import com.google.gson.Gson
@@ -40,7 +37,6 @@ data class LocationForecast(
     val providerForecasts: List<ProviderForecast>,
     val providerStatuses: List<ProviderStatus>,
     val marineConditions: MarineConditions?,
-    val widgetSourcePreference: WidgetSourcePreference?,
     val forecastSourcePreference: ForecastSourcePreference?,
     val lastRefreshFailed: Boolean = false
 )
@@ -55,7 +51,6 @@ class WeatherRepository(
     private val locationDao: LocationDao,
     private val forecastCacheDao: ForecastCacheDao,
     private val providerStatusDao: ProviderStatusDao,
-    private val widgetSourcePreferenceDao: WidgetSourcePreferenceDao,
     private val forecastSourcePreferenceDao: com.example.weatherapp.data.db.ForecastSourcePreferenceDao,
     private val marineCacheDao: MarineCacheDao,
     private val marineApi: MarineApiClient,
@@ -80,7 +75,7 @@ class WeatherRepository(
     suspend fun getCachedWidgetForecasts(): List<LocationForecast> =
         locationDao.getWidgetLocationsWithCache().map { row ->
             val item = toLocationForecast(row)
-            val providerId = resolveDefaultProvider(row.location, item.widgetSourcePreference?.selectedProviderId)
+            val providerId = resolveDefaultProvider(row.location, item.forecastSourcePreference?.selectedProviderId)
             item.copy(forecast = item.providerForecasts.firstOrNull { it.providerId == providerId } ?: item.forecast)
         }
 
@@ -146,7 +141,7 @@ class WeatherRepository(
         val units = settings.toWeatherUnits()
         var failure: Throwable? = null
         locationDao.getWidgetLocationsWithCache().forEach { row ->
-            val providerIds = widgetProviderFallbackOrder(row.location, row.widgetSourcePreference?.selectedProviderId)
+            val providerIds = widgetProviderFallbackOrder(row.location, row.forecastSourcePreference?.selectedProviderId)
             var success = false
             providerIds.forEach { providerId ->
                 if (!success) {
@@ -181,10 +176,6 @@ class WeatherRepository(
     suspend fun providerOptions(location: LocationEntity): List<ProviderOption> =
         listOf(ProviderOption(WeatherProviderIds.AUTO, "Default source", "Default")) +
             availableProviders(location).map { ProviderOption(it.id, it.displayName, it.shortName) }
-
-    suspend fun setWidgetSource(locationId: Long, providerId: String) {
-        widgetSourcePreferenceDao.upsert(WidgetSourcePreferenceEntity(locationId, providerId))
-    }
 
     suspend fun setForecastSource(locationId: Long, providerId: String) {
         forecastSourcePreferenceDao.upsert(com.example.weatherapp.data.db.ForecastSourcePreferenceEntity(locationId, providerId))
@@ -247,9 +238,6 @@ class WeatherRepository(
             providerForecasts = forecasts,
             providerStatuses = row.providerStatuses.map { it.toProviderStatus() },
             marineConditions = marineConditions,
-            widgetSourcePreference = row.widgetSourcePreference?.let {
-                WidgetSourcePreference(it.locationId, it.selectedProviderId)
-            },
             forecastSourcePreference = row.forecastSourcePreference?.let {
                 ForecastSourcePreference(it.locationId, it.selectedProviderId)
             }
@@ -308,11 +296,10 @@ class WeatherRepository(
 
     private fun resolveDefaultProvider(location: LocationEntity, forecastSourceProviderId: String?): String {
         if (forecastSourceProviderId != null && forecastSourceProviderId != WeatherProviderIds.AUTO) return forecastSourceProviderId
-        val configuredIds = providers.map { it.id }.toSet()
         val countryCode = location.countryCodeOrName()
         return when {
-            countryCode == "GB" && WeatherProviderIds.MET_OFFICE in configuredIds -> WeatherProviderIds.MET_OFFICE
-            countryCode == "ES" && WeatherProviderIds.AEMET in configuredIds -> WeatherProviderIds.AEMET
+            countryCode == "GB" && providers.any { it.id == WeatherProviderIds.MET_OFFICE && it.isConfigured } -> WeatherProviderIds.MET_OFFICE
+            countryCode == "ES" && providers.any { it.id == WeatherProviderIds.AEMET && it.isConfigured } -> WeatherProviderIds.AEMET
             else -> WeatherProviderIds.OPEN_METEO
         }
     }

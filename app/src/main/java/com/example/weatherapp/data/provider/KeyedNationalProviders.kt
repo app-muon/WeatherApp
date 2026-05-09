@@ -32,9 +32,11 @@ class MetOfficeProvider(
     override val id = WeatherProviderIds.MET_OFFICE
     override val displayName = "Met Office"
     override val shortName = "MO"
+    override val isConfigured: Boolean
+        get() = apiKey.isNotBlank()
 
     override suspend fun isAvailableFor(location: LocationEntity): Boolean =
-        apiKey.isNotBlank() && location.countryCodeOrName() == "GB"
+        isConfigured && location.countryCodeOrName() == "GB"
 
     override suspend fun fetchForecast(location: LocationEntity, units: WeatherUnits): ProviderFetchResult {
         val hourly = api.pointForecast(
@@ -61,7 +63,7 @@ class MetOfficeProvider(
         val hourly = hourlyRoot.metOfficeTimeSeries().mapNotNull { it.toMetOfficeHourly(zone) }
         val daily = dailyRoot.metOfficeTimeSeries()
             .mapNotNull { it.toMetOfficeDaily(zone) }
-            .filterNot { it.date.isBefore(LocalDate.now(zone).minusDays(1)) }
+            .filterNot { it.date.isBefore(LocalDate.now(zone)) }
             .take(7)
         return ProviderForecast(
             providerId = id,
@@ -85,9 +87,11 @@ class AemetProvider(
     override val id = WeatherProviderIds.AEMET
     override val displayName = "AEMET"
     override val shortName = "AEMET"
+    override val isConfigured: Boolean
+        get() = apiKey.isNotBlank()
 
     override suspend fun isAvailableFor(location: LocationEntity): Boolean =
-        apiKey.isNotBlank() && location.countryCodeOrName() == "ES"
+        isConfigured && location.countryCodeOrName() == "ES"
 
     override suspend fun fetchForecast(location: LocationEntity, units: WeatherUnits): ProviderFetchResult {
         val municipality = findNearestMunicipality(location)
@@ -271,18 +275,18 @@ private fun JsonObject.toMetOfficeHourly(zone: ZoneId): HourlyForecast? {
     val time = zonedTimeOrNull("time", zone) ?: return null
     return HourlyForecast(
         time = time,
-        temperature = doubleOrNull("screenTemperature"),
-        feelsLike = doubleOrNull("feelsLikeTemperature") ?: doubleOrNull("feelsLikeTemp"),
-        humidity = doubleOrNull("screenRelativeHumidity")?.roundToInt(),
-        precipitationProbability = intOrNull("probOfPrecipitation"),
-        precipitation = doubleOrNull("totalPrecipAmount"),
-        rain = doubleOrNull("totalPrecipAmount"),
-        weatherCode = intOrNull("significantWeatherCode")?.toOpenMeteoWeatherCode(),
+        temperature = firstDoubleOrNull("screenTemperature", "screenTemp", "screenAirTemperature"),
+        feelsLike = firstDoubleOrNull("feelsLikeTemperature", "feelsLikeTemp", "feelsLikeScreenTemperature"),
+        humidity = firstDoubleOrNull("screenRelativeHumidity", "relativeHumidity")?.roundToInt(),
+        precipitationProbability = firstIntOrNull("probOfPrecipitation", "probabilityOfPrecipitation"),
+        precipitation = firstDoubleOrNull("totalPrecipAmount", "totalPrecipitationAmount"),
+        rain = firstDoubleOrNull("totalPrecipAmount", "totalPrecipitationAmount"),
+        weatherCode = firstIntOrNull("significantWeatherCode", "weatherCode")?.toOpenMeteoWeatherCode(),
         cloudCover = null,
         pressure = doubleOrNull("mslp")?.let { if (it > 2000) it / 100 else it },
         visibility = doubleOrNull("visibility"),
-        windSpeed = doubleOrNull("windSpeed10m")?.msToKmh(),
-        windDirection = intOrNull("windDirectionFrom10m"),
+        windSpeed = firstDoubleOrNull("windSpeed10m", "windSpeed")?.msToKmh(),
+        windDirection = firstIntOrNull("windDirectionFrom10m", "windDirection10m", "windDirection"),
         uvIndex = doubleOrNull("uvIndex")
     )
 }
@@ -294,37 +298,45 @@ private fun JsonObject.toMetOfficeDaily(zone: ZoneId): DailyForecast? {
     return DailyForecast(
         date = date,
         weatherCode = (
-            intOrNull("daySignificantWeatherCode")
-                ?: intOrNull("nightSignificantWeatherCode")
-                ?: intOrNull("significantWeatherCode")
+            firstIntOrNull("daySignificantWeatherCode", "dayWeatherCode")
+                ?: firstIntOrNull("nightSignificantWeatherCode", "nightWeatherCode")
+                ?: firstIntOrNull("significantWeatherCode", "weatherCode")
             )?.toOpenMeteoWeatherCode(),
-        tempMin = doubleOrNull("minScreenAirTemp")
-            ?: doubleOrNull("nightMinScreenAirTemp")
-            ?: doubleOrNull("minScreenTemperature"),
-        tempMax = doubleOrNull("maxScreenAirTemp")
-            ?: doubleOrNull("dayMaxScreenAirTemp")
-            ?: doubleOrNull("maxScreenTemperature"),
+        tempMin = firstDoubleOrNull(
+            "minScreenAirTemp",
+            "minScreenAirTemperature",
+            "nightMinScreenAirTemp",
+            "nightMinScreenTemperature",
+            "minScreenTemperature"
+        ),
+        tempMax = firstDoubleOrNull(
+            "maxScreenAirTemp",
+            "maxScreenAirTemperature",
+            "dayMaxScreenAirTemp",
+            "dayMaxScreenTemperature",
+            "maxScreenTemperature"
+        ),
         precipitationProbabilityMax = listOfNotNull(
-            intOrNull("probOfPrecipitation"),
-            intOrNull("dayProbabilityOfPrecipitation"),
-            intOrNull("nightProbabilityOfPrecipitation")
+            firstIntOrNull("probOfPrecipitation", "probabilityOfPrecipitation"),
+            firstIntOrNull("dayProbabilityOfPrecipitation", "dayProbOfPrecipitation"),
+            firstIntOrNull("nightProbabilityOfPrecipitation", "nightProbOfPrecipitation")
         ).maxOrNull(),
         precipitationSum = listOfNotNull(
-            doubleOrNull("totalPrecipAmount"),
-            doubleOrNull("dayMaxTotalPrecipAmount"),
-            doubleOrNull("nightMaxTotalPrecipAmount")
+            firstDoubleOrNull("totalPrecipAmount", "totalPrecipitationAmount"),
+            firstDoubleOrNull("dayMaxTotalPrecipAmount", "dayMaxTotalPrecipitationAmount"),
+            firstDoubleOrNull("nightMaxTotalPrecipAmount", "nightMaxTotalPrecipitationAmount")
         ).sumOrNull(),
         rainSum = listOfNotNull(
-            doubleOrNull("totalPrecipAmount"),
-            doubleOrNull("dayMaxTotalPrecipAmount"),
-            doubleOrNull("nightMaxTotalPrecipAmount")
+            firstDoubleOrNull("totalPrecipAmount", "totalPrecipitationAmount"),
+            firstDoubleOrNull("dayMaxTotalPrecipAmount", "dayMaxTotalPrecipitationAmount"),
+            firstDoubleOrNull("nightMaxTotalPrecipAmount", "nightMaxTotalPrecipitationAmount")
         ).sumOrNull(),
-        windSpeedMax = listOfNotNull(middayWind, midnightWind, doubleOrNull("windSpeed10m"))
+        windSpeedMax = listOfNotNull(middayWind, midnightWind, firstDoubleOrNull("windSpeed10m", "windSpeed"))
             .maxOrNull()
             ?.msToKmh(),
-        windDirectionDominant = intOrNull("midday10MWindDirection")
-            ?: intOrNull("midnight10MWindDirection")
-            ?: intOrNull("windDirectionFrom10m"),
+        windDirectionDominant = firstIntOrNull("midday10MWindDirection", "middayWindDirection")
+            ?: firstIntOrNull("midnight10MWindDirection", "midnightWindDirection")
+            ?: firstIntOrNull("windDirectionFrom10m", "windDirection10m", "windDirection"),
         sunrise = null,
         sunset = null,
         uvIndexMax = doubleOrNull("uvIndex")
@@ -392,6 +404,12 @@ private fun JsonObject.intOrNull(name: String): Int? =
 
 private fun JsonObject.dateOrNull(name: String): LocalDate? =
     stringOrNull(name)?.substringBefore("T")?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+
+private fun JsonObject.firstDoubleOrNull(vararg names: String): Double? =
+    names.firstNotNullOfOrNull { doubleOrNull(it) }
+
+private fun JsonObject.firstIntOrNull(vararg names: String): Int? =
+    names.firstNotNullOfOrNull { intOrNull(it) }
 
 private fun JsonArray.bestPeriod(): JsonObject? =
     mapNotNull { it.asObjectOrNull() }
