@@ -74,7 +74,7 @@ private fun WeatherWidgetContent(items: List<LocationForecast>) {
             .background(ColorProvider(Color(0xFFFF3DF2)))
             .padding(1.dp)
             .background(ColorProvider(Color(0xFF050711)))
-            .padding(5.dp),
+            .padding(start = 5.dp, top = 5.dp, end = 2.dp, bottom = 5.dp),
         verticalAlignment = Alignment.Vertical.Top
     ) {
         when (items.size) {
@@ -104,7 +104,7 @@ private fun WidgetLabelRow(forecast: Forecast?) {
         verticalAlignment = Alignment.Vertical.CenterVertically
     ) {
         Spacer(GlanceModifier.width(82.dp))
-        HeaderCell("Now", 60.dp)
+        HeaderCell("Now", 52.dp)
         forecast?.daily?.take(3)?.forEachIndexed { index, day ->
             HeaderCell(
                 when (index) {
@@ -160,7 +160,7 @@ private fun WeatherWidgetRow(item: LocationForecast, context: Context, rowHeight
 @Composable
 private fun CurrentCell(forecast: Forecast) {
     Row(
-        modifier = GlanceModifier.width(60.dp),
+        modifier = GlanceModifier.width(52.dp),
         verticalAlignment = Alignment.Vertical.CenterVertically
     ) {
         WeatherImage(forecast.current?.weatherCode ?: 0)
@@ -179,8 +179,12 @@ private fun DailyCell(day: DailyForecast) {
     ) {
         WeatherImage(day.weatherCode ?: 0)
         Text(
-            text = "${day.tempMin.temp()}/${day.tempMax.temp()}",
+            text = day.tempMax.temp(),
             style = TextStyle(fontWeight = FontWeight.Medium, fontSize = 13.sp, color = ColorProvider(Color(0xFFE8F7FF)))
+        )
+        Text(
+            text = day.tempMin.temp(),
+            style = TextStyle(fontSize = 11.sp, color = ColorProvider(Color(0xFF9DB8C0)))
         )
     }
 }

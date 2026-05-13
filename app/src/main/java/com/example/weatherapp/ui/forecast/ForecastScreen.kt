@@ -43,6 +43,7 @@ import com.example.weatherapp.domain.model.MarineConditions
 import com.example.weatherapp.settings.WeatherSettings
 import java.time.Duration
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
@@ -104,6 +105,19 @@ fun ForecastScreen(
         if (detailForecast == null) {
             ErrorState(onRefresh)
             return@Column
+        }
+
+        val updateLabel = when (selectedTab) {
+            ForecastSubTab.Forecast -> detailForecast.fetchedAt
+            ForecastSubTab.Compare -> selected.providerForecasts.map { it.fetchedAt }.minOrNull()
+            ForecastSubTab.Marine -> null
+        }?.atZone(ZoneId.systemDefault())?.format(DateTimeFormatter.ofPattern("d MMM, HH:mm"))
+        if (updateLabel != null) {
+            Text(
+                "Updated $updateLabel",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
 
         when (selectedTab) {
