@@ -32,6 +32,7 @@ import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
 import androidx.work.WorkManager
 import com.example.weatherapp.MainActivity
+import com.example.weatherapp.R
 import com.example.weatherapp.WeatherApplication
 import com.example.weatherapp.data.repository.LocationForecast
 import com.example.weatherapp.data.repository.WeatherRepository
@@ -69,11 +70,11 @@ private fun WeatherWidgetContent(items: List<LocationForecast>) {
     Column(
         modifier = GlanceModifier
             .fillMaxSize()
-            .background(ColorProvider(Color(0xFF00E5FF)))
+            .background(Color(0xFF00E5FF))
             .padding(2.dp)
-            .background(ColorProvider(Color(0xFFFF3DF2)))
+            .background(Color(0xFFFF3DF2))
             .padding(1.dp)
-            .background(ColorProvider(Color(0xFF050711)))
+            .background(Color(0xFF050711))
             .padding(start = 5.dp, top = 5.dp, end = 2.dp, bottom = 5.dp),
         verticalAlignment = Alignment.Vertical.Top
     ) {
@@ -124,7 +125,7 @@ private fun HeaderCell(text: String, width: androidx.compose.ui.unit.Dp) {
     Text(
         text = text,
         modifier = GlanceModifier.width(width),
-        style = TextStyle(fontSize = 9.sp, color = ColorProvider(Color(0xFFC5D8DE)))
+        style = TextStyle(fontSize = 9.sp, color = ColorProvider(R.color.widget_text_secondary))
     )
 }
 
@@ -141,17 +142,17 @@ private fun WeatherWidgetRow(item: LocationForecast, context: Context, rowHeight
         Text(
             text = item.location.name.take(16),
             modifier = GlanceModifier.width(82.dp),
-            style = TextStyle(fontWeight = FontWeight.Bold, fontSize = 15.sp, color = ColorProvider(Color(0xFF00E5FF)))
+            style = TextStyle(fontWeight = FontWeight.Bold, fontSize = 15.sp, color = ColorProvider(R.color.widget_text_cyan))
         )
         if (forecast == null) {
-            Text("No cache", style = TextStyle(fontSize = 14.sp, color = ColorProvider(Color(0xFFC5D8DE))))
+            Text("No cache", style = TextStyle(fontSize = 14.sp, color = ColorProvider(R.color.widget_text_secondary)))
         } else {
             CurrentCell(forecast)
             forecast.daily.take(3).forEach { day ->
                 DailyCell(day)
             }
             if (isStale(forecast)) {
-                Text("\u21BB", style = TextStyle(fontSize = 14.sp, color = ColorProvider(Color(0xFFE8FF4A))))
+                Text("\u21BB", style = TextStyle(fontSize = 14.sp, color = ColorProvider(R.color.widget_text_yellow)))
             }
         }
     }
@@ -166,7 +167,7 @@ private fun CurrentCell(forecast: Forecast) {
         WeatherImage(forecast.current?.weatherCode ?: 0)
         Text(
             text = forecast.current?.temperature.temp(),
-            style = TextStyle(fontWeight = FontWeight.Medium, fontSize = 14.sp, color = ColorProvider(Color(0xFFE8F7FF)))
+            style = TextStyle(fontWeight = FontWeight.Medium, fontSize = 14.sp, color = ColorProvider(R.color.widget_text_primary))
         )
     }
 }
@@ -180,11 +181,11 @@ private fun DailyCell(day: DailyForecast) {
         WeatherImage(day.weatherCode ?: 0)
         Text(
             text = day.tempMax.temp(),
-            style = TextStyle(fontWeight = FontWeight.Medium, fontSize = 13.sp, color = ColorProvider(Color(0xFFE8F7FF)))
+            style = TextStyle(fontWeight = FontWeight.Medium, fontSize = 13.sp, color = ColorProvider(R.color.widget_text_primary))
         )
         Text(
             text = day.tempMin.temp(),
-            style = TextStyle(fontSize = 11.sp, color = ColorProvider(Color(0xFF9DB8C0)))
+            style = TextStyle(fontSize = 11.sp, color = ColorProvider(R.color.widget_text_muted))
         )
     }
 }
@@ -212,7 +213,7 @@ private fun EmptyWidgetText(
             .height(rowHeight)
             .clickable(openAppAction(context, locationId))
             .padding(4.dp),
-        style = TextStyle(fontSize = 14.sp, color = ColorProvider(Color(0xFF00E5FF)))
+        style = TextStyle(fontSize = 14.sp, color = ColorProvider(R.color.widget_text_cyan))
     )
 }
 

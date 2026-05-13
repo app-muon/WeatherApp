@@ -1,4 +1,12 @@
 <resources>
     <color name="seed">#2E5E4E</color>
+    <color name="widget_border_cyan">#00E5FF</color>
+    <color name="widget_border_magenta">#FF3DF2</color>
+    <color name="widget_background">#050711</color>
+    <color name="widget_text_cyan">#00E5FF</color>
+    <color name="widget_text_yellow">#E8FF4A</color>
+    <color name="widget_text_primary">#E8F7FF</color>
+    <color name="widget_text_secondary">#C5D8DE</color>
+    <color name="widget_text_muted">#9DB8C0</color>
 </resources>
 
