@@ -63,7 +63,6 @@ class MetNorwayProvider(
         val daily = hourly.groupBy { it.time.toLocalDate() }
             .toSortedMap()
             .entries
-            .take(7)
             .map { (date, values) -> values.toDaily(date) }
         return ProviderForecast(
             providerId = id,

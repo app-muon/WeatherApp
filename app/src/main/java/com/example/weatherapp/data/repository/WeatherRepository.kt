@@ -75,8 +75,13 @@ class WeatherRepository(
     suspend fun getCachedWidgetForecasts(): List<LocationForecast> =
         locationDao.getWidgetLocationsWithCache().map { row ->
             val item = toLocationForecast(row)
-            val providerId = resolveDefaultProvider(row.location, item.forecastSourcePreference?.selectedProviderId)
-            item.copy(forecast = item.providerForecasts.firstOrNull { it.providerId == providerId } ?: item.forecast)
+            val fallbackOrder = widgetProviderFallbackOrder(row.location, item.forecastSourcePreference?.selectedProviderId)
+            val candidates = fallbackOrder.mapNotNull { id -> item.providerForecasts.firstOrNull { it.providerId == id } }
+            // Prefer the configured provider while its data is fresh, but fall back to the
+            // freshest cache we actually have so a failing preferred provider doesn't pin the
+            // widget to permanently-stale data. If everything is stale, keep the preferred one.
+            val forecast = candidates.firstOrNull { !it.isStale() } ?: candidates.firstOrNull() ?: item.forecast
+            item.copy(forecast = forecast)
         }
 
     suspend fun refreshAll(): Result<Unit> {
@@ -116,13 +121,16 @@ class WeatherRepository(
     suspend fun refreshAvailableProviders(location: LocationEntity) {
         val settings = settingsRepository.settings.first()
         val units = settings.toWeatherUnits()
+        val preferredId = resolveDefaultProvider(location, forecastSourcePreferenceDao.get(location.id)?.selectedProviderId)
         var firstFailure: Throwable? = null
         availableProviders(location).forEach { provider ->
             val result = fetchAndCacheProvider(location, provider, units)
+            // Surface failures from the provider the user actually sees (their configured/default
+            // source) as well as Open-Meteo, instead of silently swallowing them.
             if (
                 result.isFailure &&
                 firstFailure == null &&
-                provider.id == WeatherProviderIds.OPEN_METEO
+                (provider.id == preferredId || provider.id == WeatherProviderIds.OPEN_METEO)
             ) {
                 firstFailure = result.exceptionOrNull()
             }
@@ -308,6 +316,9 @@ class WeatherRepository(
         val requested = resolveDefaultProvider(location, forecastSourceProviderId)
         return listOf(requested, WeatherProviderIds.OPEN_METEO, WeatherProviderIds.MET_NORWAY).distinct()
     }
+
+    private fun ProviderForecast.isStale(now: Long = Instant.now().toEpochMilli()): Boolean =
+        now - fetchedAt.toEpochMilli() > STALE_AFTER_MILLIS
 
     private fun decodeCachedForecast(cache: ForecastCacheEntity): ProviderForecast? =
         runCatching { forecastJsonCodec.decode(cache.normalisedJson) }

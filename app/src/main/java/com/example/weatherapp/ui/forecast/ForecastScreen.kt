@@ -498,7 +498,7 @@ private fun DailyForecastSection(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Daily", style = MaterialTheme.typography.titleLarge)
-        forecast.daily.take(7).forEach { day ->
+        forecast.daily.forEach { day ->
             DailyCard(
                 day = day,
                 hourly = forecast.hourly.filter { it.time.toLocalDate() == day.date },

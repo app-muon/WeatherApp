@@ -66,7 +66,6 @@ class MetOfficeProvider(
         val daily = dailyRoot.metOfficeTimeSeries()
             .mapNotNull { it.toMetOfficeDaily(zone) }
             .filterNot { it.date.isBefore(LocalDate.now(zone)) }
-            .take(7)
         return ProviderForecast(
             providerId = id,
             providerName = displayName,

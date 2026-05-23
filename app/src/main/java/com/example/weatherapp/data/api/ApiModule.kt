@@ -66,7 +66,7 @@ interface WeatherApiClient {
         @Query("latitude") latitude: Double,
         @Query("longitude") longitude: Double,
         @Query("timezone") timezone: String = "auto",
-        @Query("forecast_days") forecastDays: Int = 7,
+        @Query("forecast_days") forecastDays: Int = 16,
         @Query("current") current: String = WeatherApiFields.CURRENT,
         @Query("hourly") hourly: String = WeatherApiFields.HOURLY,
         @Query("daily") daily: String = WeatherApiFields.DAILY,
