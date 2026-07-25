@@ -200,11 +200,11 @@ private fun WeatherRoot(
             showRefresh = page == AppPage.Forecasts,
             refreshEnabled = state.items.isNotEmpty() && !state.isRefreshing,
             onSelectPage = { page = it },
-            onRefresh = forecastViewModel::refreshSelected
+            onRefresh = forecastViewModel::refreshAllLocations
         )
         PullToRefreshBox(
             isRefreshing = page == AppPage.Forecasts && state.isRefreshing,
-            onRefresh = { if (page == AppPage.Forecasts) forecastViewModel.refreshSelected() },
+            onRefresh = { if (page == AppPage.Forecasts) forecastViewModel.refreshAllLocations() },
             modifier = Modifier.fillMaxSize()
         ) {
             LazyColumn(
@@ -294,7 +294,7 @@ private fun AppPageBar(
         ) {
             Icon(
                 painter = painterResource(com.example.weatherapp.R.drawable.ic_refresh),
-                contentDescription = "Refresh forecasts"
+                contentDescription = "Refresh all forecasts"
             )
         }
     }

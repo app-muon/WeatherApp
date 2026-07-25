@@ -2,7 +2,9 @@ package com.example.weatherapp
 
 import android.app.Application
 import android.content.Context
+import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.example.weatherapp.data.api.ApiModule
@@ -32,7 +34,11 @@ class WeatherApplication : Application() {
     }
 
     private fun schedulePeriodicRefresh(context: Context) {
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
         val request = PeriodicWorkRequestBuilder<ForecastRefreshWorker>(3, TimeUnit.HOURS)
+            .setConstraints(constraints)
             .build()
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(
             ForecastRefreshWorker.PERIODIC_WORK_NAME,

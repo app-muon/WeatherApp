@@ -122,6 +122,12 @@ class ForecastViewModel(
         }
     }
 
+    fun refreshAllLocations() {
+        viewModelScope.launch {
+            refreshDisplayProviders()
+        }
+    }
+
     fun toggleExpandedDay(date: LocalDate) {
         _state.value = _state.value.copy(
             expandedDay = if (_state.value.expandedDay == date) null else date
@@ -140,9 +146,17 @@ class ForecastViewModel(
         }
     }
 
-    private suspend fun refreshAll(defaultOnly: Boolean = false) {
+    private suspend fun refreshAll() {
+        refreshWith { weatherRepository.refreshAll() }
+    }
+
+    private suspend fun refreshDisplayProviders() {
+        refreshWith { weatherRepository.refreshAllDisplayProviders() }
+    }
+
+    private suspend fun refreshWith(refresh: suspend () -> Result<Unit>) {
         _state.value = _state.value.copy(isRefreshing = true, refreshMessage = null)
-        val result = if (defaultOnly) weatherRepository.refreshAllDefaultOnly() else weatherRepository.refreshAll()
+        val result = refresh()
         val message = if (result.isFailure && _state.value.items.any { it.forecast != null }) {
             "Could not refresh forecast"
         } else if (result.isFailure) {

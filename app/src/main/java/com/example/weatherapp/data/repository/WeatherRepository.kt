@@ -1,6 +1,8 @@
 package com.example.weatherapp.data.repository
 
+import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import com.example.weatherapp.data.api.MarineApiClient
@@ -74,14 +76,7 @@ class WeatherRepository(
 
     suspend fun getCachedWidgetForecasts(): List<LocationForecast> =
         locationDao.getWidgetLocationsWithCache().map { row ->
-            val item = toLocationForecast(row)
-            val fallbackOrder = widgetProviderFallbackOrder(row.location, item.forecastSourcePreference?.selectedProviderId)
-            val candidates = fallbackOrder.mapNotNull { id -> item.providerForecasts.firstOrNull { it.providerId == id } }
-            // Prefer the configured provider while its data is fresh, but fall back to the
-            // freshest cache we actually have so a failing preferred provider doesn't pin the
-            // widget to permanently-stale data. If everything is stale, keep the preferred one.
-            val forecast = candidates.firstOrNull { !it.isStale() } ?: candidates.firstOrNull() ?: item.forecast
-            item.copy(forecast = forecast)
+            toLocationForecast(row)
         }
 
     suspend fun refreshAll(): Result<Unit> {
@@ -94,21 +89,17 @@ class WeatherRepository(
         return failure?.let { Result.failure(it) } ?: Result.success(Unit)
     }
 
-    suspend fun refreshAllDefaultOnly(): Result<Unit> {
+    suspend fun refreshAllDisplayProviders(): Result<Unit> {
         val rows = locationDao.getLocationsWithCache()
         var failure: Throwable? = null
         val settings = settingsRepository.settings.first()
         val units = settings.toWeatherUnits()
         rows.forEach { row ->
-            val providerId = resolveDefaultProvider(row.location, row.forecastSourcePreference?.selectedProviderId)
-            val provider = providers.firstOrNull {
-                it.id == providerId && runCatching { it.isAvailableFor(row.location) }.getOrDefault(false)
-            } ?: providers.firstOrNull {
-                it.id == WeatherProviderIds.OPEN_METEO &&
-                    runCatching { it.isAvailableFor(row.location) }.getOrDefault(false)
-            }
-                ?: return@forEach
-            val result = fetchAndCacheProvider(row.location, provider, units)
+            val result = refreshProviderFallback(
+                location = row.location,
+                providerIds = displayProviderFallbackOrder(row.location, row.forecastSourcePreference?.selectedProviderId),
+                units = units
+            )
             if (result.isFailure) failure = result.exceptionOrNull()
         }
         return failure?.let { Result.failure(it) } ?: Result.success(Unit)
@@ -149,18 +140,12 @@ class WeatherRepository(
         val units = settings.toWeatherUnits()
         var failure: Throwable? = null
         locationDao.getWidgetLocationsWithCache().forEach { row ->
-            val providerIds = widgetProviderFallbackOrder(row.location, row.forecastSourcePreference?.selectedProviderId)
-            var success = false
-            providerIds.forEach { providerId ->
-                if (!success) {
-                    val provider = providers.firstOrNull { it.id == providerId }
-                    if (provider != null && runCatching { provider.isAvailableFor(row.location) }.getOrDefault(false)) {
-                        val result = fetchAndCacheProvider(row.location, provider, units)
-                        success = result.isSuccess
-                        if (result.isFailure && failure == null) failure = result.exceptionOrNull()
-                    }
-                }
-            }
+            val result = refreshProviderFallback(
+                location = row.location,
+                providerIds = displayProviderFallbackOrder(row.location, row.forecastSourcePreference?.selectedProviderId),
+                units = units
+            )
+            if (result.isFailure && failure == null) failure = result.exceptionOrNull()
         }
         return failure?.let { Result.failure(it) } ?: Result.success(Unit)
     }
@@ -172,10 +157,15 @@ class WeatherRepository(
             val now = Instant.now().toEpochMilli()
             val stale = forecasts.any { it.forecast == null || now - it.forecast.fetchedAt.toEpochMilli() > STALE_AFTER_MILLIS }
             if (stale) {
+                val constraints = Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .build()
                 workManager.enqueueUniqueWork(
                     ForecastRefreshWorker.STALE_REFRESH_WORK_NAME,
                     ExistingWorkPolicy.KEEP,
-                    OneTimeWorkRequestBuilder<ForecastRefreshWorker>().build()
+                    OneTimeWorkRequestBuilder<ForecastRefreshWorker>()
+                        .setConstraints(constraints)
+                        .build()
                 )
             }
         }
@@ -231,10 +221,11 @@ class WeatherRepository(
         val forecasts = row.forecastCaches.mapNotNull { cache -> decodeCachedForecast(cache) }
             .filter { it.hasForecastData() }
             .sortedWith(compareBy<ProviderForecast> { providerSortOrder(it.providerId) }.thenBy { it.providerName })
-        val forecastPreferredId = resolveDefaultProvider(row.location, row.forecastSourcePreference?.selectedProviderId)
-        val forecast = forecasts.firstOrNull { it.providerId == forecastPreferredId }
-            ?: forecasts.firstOrNull { it.providerId == WeatherProviderIds.OPEN_METEO }
-            ?: forecasts.firstOrNull()
+        val forecast = selectDisplayForecast(
+            location = row.location,
+            forecastSourceProviderId = row.forecastSourcePreference?.selectedProviderId,
+            forecasts = forecasts
+        )
         val marineConditions = row.marineCache?.let {
             runCatching {
                 marineParser.parse(it.rawJson, forecast?.current?.time ?: java.time.Instant.ofEpochMilli(it.fetchedAtEpochMillis).atZone(java.time.ZoneId.systemDefault()))
@@ -299,6 +290,22 @@ class WeatherRepository(
         }
     }
 
+    private suspend fun refreshProviderFallback(
+        location: LocationEntity,
+        providerIds: List<String>,
+        units: WeatherUnits
+    ): Result<Unit> {
+        var firstFailure: Throwable? = null
+        for (providerId in providerIds) {
+            val provider = providers.firstOrNull { it.id == providerId } ?: continue
+            if (!runCatching { provider.isAvailableFor(location) }.getOrDefault(false)) continue
+            val result = fetchAndCacheProvider(location, provider, units)
+            if (result.isSuccess) return Result.success(Unit)
+            if (firstFailure == null) firstFailure = result.exceptionOrNull()
+        }
+        return firstFailure?.let { Result.failure(it) } ?: Result.success(Unit)
+    }
+
     private suspend fun availableProviders(location: LocationEntity): List<WeatherProvider> =
         providers.filter { provider -> runCatching { provider.isAvailableFor(location) }.getOrDefault(false) }
 
@@ -312,9 +319,22 @@ class WeatherRepository(
         }
     }
 
-    private fun widgetProviderFallbackOrder(location: LocationEntity, forecastSourceProviderId: String?): List<String> {
+    private fun displayProviderFallbackOrder(location: LocationEntity, forecastSourceProviderId: String?): List<String> {
         val requested = resolveDefaultProvider(location, forecastSourceProviderId)
         return listOf(requested, WeatherProviderIds.OPEN_METEO, WeatherProviderIds.MET_NORWAY).distinct()
+    }
+
+    private fun selectDisplayForecast(
+        location: LocationEntity,
+        forecastSourceProviderId: String?,
+        forecasts: List<ProviderForecast>
+    ): ProviderForecast? {
+        val candidates = displayProviderFallbackOrder(location, forecastSourceProviderId)
+            .mapNotNull { id -> forecasts.firstOrNull { it.providerId == id } }
+        return candidates.firstOrNull { !it.isStale() }
+            ?: candidates.firstOrNull()
+            ?: forecasts.firstOrNull { !it.isStale() }
+            ?: forecasts.firstOrNull()
     }
 
     private fun ProviderForecast.isStale(now: Long = Instant.now().toEpochMilli()): Boolean =

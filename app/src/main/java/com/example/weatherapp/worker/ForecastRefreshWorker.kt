@@ -13,7 +13,7 @@ class ForecastRefreshWorker(
 ) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
         val container = (applicationContext as WeatherApplication).container
-        val result = container.weatherRepository.refreshWidgetLocations()
+        val result = container.weatherRepository.refreshAllDisplayProviders()
         WeatherWidget().updateAll(applicationContext)
         return if (result.isSuccess) Result.success() else Result.retry()
     }
