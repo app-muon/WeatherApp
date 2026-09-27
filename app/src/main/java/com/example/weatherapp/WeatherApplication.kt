@@ -3,6 +3,7 @@ package com.example.weatherapp
 import android.app.Application
 import android.content.Context
 import androidx.work.Constraints
+import androidx.work.BackoffPolicy
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
@@ -11,6 +12,19 @@ import com.example.weatherapp.data.api.ApiModule
 import com.example.weatherapp.data.db.WeatherDatabase
 import com.example.weatherapp.data.repository.LocationRepository
 import com.example.weatherapp.data.repository.WeatherRepository
+import com.example.weatherapp.data.repository.RefreshCoordinator
+import com.example.weatherapp.ui.widget.updateWeatherWidgets
+import com.example.weatherapp.ui.widget.observeWidgetChanges
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.retryWhen
+import java.time.Instant
 import com.example.weatherapp.data.provider.AemetProvider
 import com.example.weatherapp.data.provider.MetNorwayProvider
 import com.example.weatherapp.data.provider.MetOfficeProvider
@@ -39,6 +53,7 @@ class WeatherApplication : Application() {
             .build()
         val request = PeriodicWorkRequestBuilder<ForecastRefreshWorker>(3, TimeUnit.HOURS)
             .setConstraints(constraints)
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .build()
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(
             ForecastRefreshWorker.PERIODIC_WORK_NAME,
@@ -49,6 +64,9 @@ class WeatherApplication : Application() {
 }
 
 class AppContainer(context: Context) {
+    val widgetTime = MutableStateFlow(Instant.now())
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val widgetChanges = Channel<Unit>(Channel.CONFLATED)
     private val database = WeatherDatabase.getInstance(context)
     private val gson = Gson()
     private val forecastParser = ForecastParser()
@@ -62,19 +80,8 @@ class AppContainer(context: Context) {
         AemetProvider(ApiModule.aemetApi, BuildConfig.AEMET_API_KEY, gson)
     )
 
-    val locationRepository = LocationRepository(
-        locationDao = database.locationDao(),
-        forecastCacheDao = database.forecastCacheDao(),
-        marineCacheDao = database.marineCacheDao(),
-        geocodingApi = ApiModule.geocodingApi
-    )
-
     val weatherRepository = WeatherRepository(
-        locationDao = database.locationDao(),
-        forecastCacheDao = database.forecastCacheDao(),
-        providerStatusDao = database.providerStatusDao(),
-        forecastSourcePreferenceDao = database.forecastSourcePreferenceDao(),
-        marineCacheDao = database.marineCacheDao(),
+        database = database,
         marineApi = ApiModule.marineApi,
         settingsRepository = settingsRepository,
         providers = providers,
@@ -82,4 +89,36 @@ class AppContainer(context: Context) {
         marineParser = marineParser,
         forecastJsonCodec = forecastJsonCodec
     )
+
+    val refreshCoordinator = RefreshCoordinator(weatherRepository, applicationScope,
+        onUnexpectedError = { android.util.Log.e("WeatherRefresh", "Refresh could not read or save weather", it) })
+
+    val locationRepository = LocationRepository(
+        database = database,
+        geocodingApi = ApiModule.geocodingApi,
+        defaultSource = { weatherRepository.defaultProvider(it) }
+    )
+
+    init {
+        applicationScope.launch {
+            observeWidgetChanges(weatherRepository.observeWidgetForecasts(), refreshCoordinator.activity)
+                .retryWhen { error, attempt ->
+                    if (error is CancellationException) throw error
+                    android.util.Log.e("WeatherWidget", "Could not observe widget forecasts", error)
+                    delay(((attempt + 1) * 1000).coerceAtMost(30_000))
+                    true
+                }.collect { widgetChanges.trySend(Unit) }
+        }
+        applicationScope.launch {
+            for (change in widgetChanges) {
+                try {
+                    updateWeatherWidgets(context.applicationContext)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    android.util.Log.w("WeatherWidget", "Widget update could not be delivered", error)
+                }
+            }
+        }
+    }
 }

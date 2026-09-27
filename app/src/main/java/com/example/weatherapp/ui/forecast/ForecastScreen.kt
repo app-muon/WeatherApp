@@ -24,10 +24,6 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
@@ -35,6 +31,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.weatherapp.data.db.LocationEntity
 import com.example.weatherapp.data.provider.WeatherProviderIds
+import com.example.weatherapp.data.repository.ContentScope
+import com.example.weatherapp.data.repository.SourceKey
+import com.example.weatherapp.domain.model.zone
+import com.example.weatherapp.domain.model.daysFrom
+import com.example.weatherapp.domain.model.upcomingInstants
+import java.time.Instant
 import com.example.weatherapp.domain.mapper.WeatherCodeMapper
 import com.example.weatherapp.domain.model.DailyForecast
 import com.example.weatherapp.domain.model.Forecast
@@ -48,24 +50,18 @@ import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
 
-private enum class ForecastSubTab(val label: String) {
-    Forecast("Forecast"),
-    Compare("Compare"),
-    Marine("Marine")
-}
-
 @Composable
 fun ForecastScreen(
     state: ForecastUiState,
     onSelectLocation: (Long) -> Unit,
     onSelectComparisonDay: (Int) -> Unit,
-    onOpenCompare: () -> Unit,
+    onSelectTab: (ContentScope) -> Unit,
     onRefresh: () -> Unit,
     onExpandDay: (LocalDate) -> Unit
 ) {
     val selected = state.selected
     val detailForecast = state.selectedForecast
-    var selectedTab by remember { mutableStateOf(ForecastSubTab.Forecast) }
+    val selectedTab = state.navigation.tab
 
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(
@@ -85,14 +81,11 @@ fun ForecastScreen(
         }
 
         TabRow(selectedTabIndex = selectedTab.ordinal) {
-            ForecastSubTab.entries.forEach { tab ->
+            ContentScope.entries.forEach { tab ->
                 Tab(
                     selected = selectedTab == tab,
-                    onClick = {
-                        selectedTab = tab
-                        if (tab == ForecastSubTab.Compare) onOpenCompare()
-                    },
-                    text = { Text(tab.label) }
+                    onClick = { onSelectTab(tab) },
+                    text = { Text(tab.name) }
                 )
             }
         }
@@ -102,53 +95,85 @@ fun ForecastScreen(
             return@Column
         }
 
-        if (detailForecast == null) {
-            ErrorState(onRefresh)
-            return@Column
+        val zone = selected.location.zone()
+        val today = state.now.atZone(zone).toLocalDate()
+        (state.refreshProblem ?: state.loadError)?.let { message ->
+            Text(message, color = MaterialTheme.colorScheme.error)
+            Button(onClick = onRefresh) { Text("Retry") }
         }
-
-        val updateLabel = when (selectedTab) {
-            ForecastSubTab.Forecast -> detailForecast.fetchedAt
-            ForecastSubTab.Compare -> selected.providerForecasts.map { it.fetchedAt }.minOrNull()
-            ForecastSubTab.Marine -> null
-        }?.atZone(ZoneId.systemDefault())?.format(DateTimeFormatter.ofPattern("d MMM, HH:mm"))
-        if (updateLabel != null) {
+        if (selectedTab != ContentScope.Compare) {
+            val fetchedAt = if (selectedTab == ContentScope.Marine) selected.marineFetchedAt else detailForecast?.fetchedAt
+            val failed = if (selectedTab == ContentScope.Marine) selected.marineStatus?.lastError != null else selected.lastRefreshFailed
+            val awaitingFirstAttempt = fetchedAt == null && if (selectedTab == ContentScope.Marine)
+                selected.marineStatus?.lastAttemptAtEpochMillis == null else selected.providerStatuses.isEmpty()
             Text(
-                "Updated $updateLabel",
+                if (selectedTab == ContentScope.Marine && selected.marineUnavailable && !state.isRefreshing)
+                    "No marine data for this location" else
+                    updateStatusLabel(fetchedAt, failed, state.isRefreshing || (awaitingFirstAttempt && state.refreshProblem == null), zone),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            if (failed && fetchedAt != null) Button(onClick = onRefresh) { Text("Retry") }
         }
 
         when (selectedTab) {
-            ForecastSubTab.Forecast -> {
+            ContentScope.Forecast -> {
+                if (detailForecast == null) {
+                    if (state.refreshProblem != null) return@Column
+                    if (state.isRefreshing || selected.providerStatuses.none { it.lastFetchedAt != null }) Text("Loading forecast…")
+                    else ErrorState(onRefresh)
+                    return@Column
+                }
+                if (selected.usingFallback) Text("Showing ${detailForecast.providerName} while the preferred source is unavailable.",
+                    style = MaterialTheme.typography.bodyMedium)
+                if (selected.usingFallback) selected.preferredSourceError?.let {
+                    Text("Preferred source: $it", style = MaterialTheme.typography.bodySmall)
+                }
                 Text(
                     text = detailForecast.providerName,
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 CurrentWeatherPanel(selected.location, detailForecast, state.settings)
-                HourlyForecastSection(detailForecast.hourly, state.settings)
+                HourlyForecastSection(detailForecast.hourly, state.settings, state.now)
                 DailyForecastSection(
                     forecast = detailForecast,
                     settings = state.settings,
                     expandedDay = state.expandedDay,
+                    today = today,
+                    now = state.now,
                     onExpandDay = onExpandDay
                 )
             }
-            ForecastSubTab.Compare -> {
+            ContentScope.Compare -> {
+                state.providerOptions[selected.location.id].orEmpty().forEach { provider ->
+                    val status = selected.providerStatuses.find { it.providerId == provider.id }
+                    val cached = selected.providerForecasts.find { it.providerId == provider.id }
+                    val active = SourceKey(selected.location.id, selected.location.revision, provider.id) in state.refreshActivity.sources
+                    Text("${provider.displayName} · ${updateStatusLabel(cached?.fetchedAt, status?.lastError != null, active, zone)}",
+                        style = MaterialTheme.typography.labelMedium)
+                }
+                if (selected.providerStatuses.any { it.lastError != null }) Button(onClick = onRefresh) { Text("Retry") }
                 ForecastComparisonSection(
                     forecasts = selected.providerForecasts,
                     settings = state.settings,
                     selectedOffset = state.comparisonDayOffset,
+                    today = today,
                     onSelectOffset = onSelectComparisonDay
                 )
                 if (state.comparisonDayOffset == -1) {
-                    HourlyComparisonSection(selected.providerForecasts, state.settings)
+                    HourlyComparisonSection(selected.providerForecasts, state.settings, state.now, zone)
                 }
             }
-            ForecastSubTab.Marine -> {
-                MarineSection(state.marineConditions)
+            ContentScope.Marine -> {
+                if (selected.marineUnavailable && selected.marineFetchedAt != null && state.marineConditions != null) {
+                    Text("Showing saved marine data from ${selected.marineFetchedAt.atZone(zone).format(DateTimeFormatter.ofPattern("d MMM, HH:mm"))}",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+                if (state.marineConditions == null && state.refreshProblem != null) return@Column
+                if (state.marineConditions == null && (state.isRefreshing || selected.marineStatus == null)) Text("Loading marine conditions…")
+                else if (!selected.marineUnavailable || state.marineConditions != null) MarineSection(state.marineConditions)
+                if (selected.marineStatus?.lastError != null && selected.marineFetchedAt == null) Button(onClick = onRefresh) { Text("Retry") }
             }
         }
     }
@@ -162,6 +187,9 @@ fun WidgetSelectionSection(
     Card {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Widget", style = MaterialTheme.typography.titleMedium)
+            state.widgetErrors.forEach { (id, message) ->
+                state.items.find { it.location.id == id }?.let { Text("${it.location.name}: $message", color = MaterialTheme.colorScheme.error) }
+            }
             repeat(2) { slot ->
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("Row ${slot + 1}", style = MaterialTheme.typography.labelLarge)
@@ -197,6 +225,7 @@ fun ForecastSourceSection(
             state.items.forEach { item ->
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(item.location.name, style = MaterialTheme.typography.labelLarge)
+                    state.sourceErrors[item.location.id]?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         modifier = Modifier.horizontalScroll(rememberScrollState())
@@ -239,6 +268,7 @@ private fun ForecastComparisonSection(
     forecasts: List<Forecast>,
     settings: WeatherSettings,
     selectedOffset: Int,
+    today: LocalDate,
     onSelectOffset: (Int) -> Unit
 ) {
     val tabs = listOf(0 to "Today", 1 to "Tomorrow", 2 to "T+2", 7 to "7 days", -1 to "Hourly")
@@ -257,19 +287,19 @@ private fun ForecastComparisonSection(
             }
         }
         when (selectedOffset) {
-            7 -> SevenDayComparison(forecasts, settings)
+            7 -> SevenDayComparison(forecasts, settings, today)
             -1 -> { /* HourlyComparisonSection rendered below in caller */ }
-            else -> DayComparisonTable(forecasts, settings, selectedOffset)
+            else -> DayComparisonTable(forecasts, settings, today.plusDays(selectedOffset.toLong()))
         }
     }
 }
 
 @Composable
-private fun DayComparisonTable(forecasts: List<Forecast>, settings: WeatherSettings, offset: Int) {
+private fun DayComparisonTable(forecasts: List<Forecast>, settings: WeatherSettings, date: LocalDate) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         ComparisonHeader()
         forecasts.forEach { forecast ->
-            val day = forecast.daily.getOrNull(offset)
+            val day = forecast.daily.find { it.date == date }
             ComparisonRow(
                 source = forecast.providerName,
                 weatherCode = day?.weatherCode,
@@ -282,21 +312,21 @@ private fun DayComparisonTable(forecasts: List<Forecast>, settings: WeatherSetti
 }
 
 @Composable
-private fun SevenDayComparison(forecasts: List<Forecast>, settings: WeatherSettings) {
+private fun SevenDayComparison(forecasts: List<Forecast>, settings: WeatherSettings, today: LocalDate) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         forecasts.forEach { forecast ->
             Text(forecast.providerName, style = MaterialTheme.typography.titleMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                forecast.daily.take(7).forEach { day ->
+                forecast.daysFrom(today, 7).forEach { (date, day) ->
                     Card(modifier = Modifier.width(96.dp)) {
                         Column(Modifier.padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(day.date.format(DateTimeFormatter.ofPattern("EEE")), style = MaterialTheme.typography.labelMedium)
+                            Text(date.format(DateTimeFormatter.ofPattern("EEE d")), style = MaterialTheme.typography.labelMedium)
                             Image(
-                                painter = painterResource(WeatherCodeMapper.drawableRes(day.weatherCode ?: 0)),
-                                contentDescription = WeatherCodeMapper.condition(day.weatherCode ?: 0).label,
+                                painter = painterResource(WeatherCodeMapper.drawableRes(day?.weatherCode ?: -1)),
+                                contentDescription = WeatherCodeMapper.condition(day?.weatherCode ?: -1).label,
                                 modifier = Modifier.size(24.dp)
                             )
-                            Text(day.minMax(settings), style = MaterialTheme.typography.bodyMedium)
+                            Text(day?.minMax(settings) ?: "—", style = MaterialTheme.typography.bodyMedium)
                         }
                     }
                 }
@@ -328,8 +358,8 @@ private fun ComparisonRow(source: String, weatherCode: Int?, minMax: String, rai
     ) {
         Text(source, modifier = Modifier.weight(1.4f), style = MaterialTheme.typography.bodyMedium)
         Image(
-            painter = painterResource(WeatherCodeMapper.drawableRes(weatherCode ?: 0)),
-            contentDescription = WeatherCodeMapper.condition(weatherCode ?: 0).label,
+            painter = painterResource(WeatherCodeMapper.drawableRes(weatherCode ?: -1)),
+            contentDescription = WeatherCodeMapper.condition(weatherCode ?: -1).label,
             modifier = Modifier
                 .weight(0.5f)
                 .size(24.dp)
@@ -341,19 +371,16 @@ private fun ComparisonRow(source: String, weatherCode: Int?, minMax: String, rai
 }
 
 @Composable
-private fun HourlyComparisonSection(forecasts: List<Forecast>, settings: WeatherSettings) {
-    val allTimes = forecasts.flatMap { it.hourly.map { hour -> hour.time } }
-        .distinct()
-        .sorted()
-        .take(24)
+private fun HourlyComparisonSection(forecasts: List<Forecast>, settings: WeatherSettings, now: Instant, zone: ZoneId) {
+    val allTimes = forecasts.upcomingInstants(now, 24)
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Hourly", style = MaterialTheme.typography.titleLarge)
         allTimes.forEach { time ->
             Card {
                 Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(time.format(DateTimeFormatter.ofPattern("EEE HH:mm")), style = MaterialTheme.typography.titleMedium)
+                    Text(time.atZone(zone).format(DateTimeFormatter.ofPattern("EEE HH:mm XXX")), style = MaterialTheme.typography.titleMedium)
                     forecasts.forEach { forecast ->
-                        val hour = forecast.hourly.firstOrNull { it.time == time }
+                        val hour = forecast.hourly.firstOrNull { it.time.toInstant() == time }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                             Text(forecast.providerName, modifier = Modifier.weight(1.2f))
                             Text(hour?.temperature.temp(settings), modifier = Modifier.weight(0.7f))
@@ -374,7 +401,7 @@ private fun CurrentWeatherPanel(
     settings: WeatherSettings
 ) {
     val current = forecast.current
-    val currentCode = current?.weatherCode ?: 0
+    val currentCode = current?.weatherCode ?: -1
     val condition = WeatherCodeMapper.condition(currentCode)
     val currentHour = forecast.hourly.minByOrNull {
         kotlin.math.abs(Duration.between(current?.time ?: it.time, it.time).toMinutes())
@@ -403,7 +430,8 @@ private fun CurrentWeatherPanel(
                     "Pressure" to (current?.pressure?.let { "${it.roundToInt()} hPa" } ?: "\u2014"),
                     "Cloud cover" to (current?.cloudCover?.let { "$it%" } ?: "\u2014"),
                     "UV index" to (currentHour?.uvIndex?.oneDecimal() ?: "—"),
-                    "Last updated" to forecast.fetchedAt.atZone((current?.time ?: ZonedDateTime.now()).zone).format(DateTimeFormatter.ofPattern("HH:mm"))
+                    "Conditions at" to (current?.time?.format(DateTimeFormatter.ofPattern("d MMM, HH:mm")) ?: "—"),
+                    "Downloaded" to forecast.fetchedAt.atZone(location.zone()).format(DateTimeFormatter.ofPattern("d MMM, HH:mm"))
                 )
             )
         }
@@ -454,15 +482,14 @@ private fun DetailGrid(items: List<Pair<String, String>>) {
 }
 
 @Composable
-private fun HourlyForecastSection(hourly: List<HourlyForecast>, settings: WeatherSettings) {
+private fun HourlyForecastSection(hourly: List<HourlyForecast>, settings: WeatherSettings, now: Instant) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Hourly", style = MaterialTheme.typography.titleLarge)
         if (hourly.isEmpty()) {
             Text("—", style = MaterialTheme.typography.bodyMedium)
             return@Column
         }
-        val now = ZonedDateTime.now(hourly.first().time.zone)
-        val next48 = hourly.filter { !it.time.isBefore(now.minusHours(1)) }.take(48)
+        val next48 = hourly.filter { !it.time.toInstant().isBefore(now) }.sortedBy { it.time.toInstant() }.take(48)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
             next48.forEach { item ->
                 HourlyCard(item, settings)
@@ -477,8 +504,8 @@ private fun HourlyCard(item: HourlyForecast, settings: WeatherSettings) {
         Column(Modifier.padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(item.time.format(DateTimeFormatter.ofPattern("EEE HH:mm")), style = MaterialTheme.typography.labelMedium)
             Image(
-                painter = painterResource(WeatherCodeMapper.drawableRes(item.weatherCode ?: 0)),
-                contentDescription = WeatherCodeMapper.condition(item.weatherCode ?: 0).label,
+                painter = painterResource(WeatherCodeMapper.drawableRes(item.weatherCode ?: -1)),
+                contentDescription = WeatherCodeMapper.condition(item.weatherCode ?: -1).label,
                 modifier = Modifier.size(28.dp)
             )
             Text(item.temperature.temp(settings), style = MaterialTheme.typography.titleMedium)
@@ -494,14 +521,16 @@ private fun DailyForecastSection(
     forecast: Forecast,
     settings: WeatherSettings,
     expandedDay: LocalDate?,
+    today: LocalDate,
+    now: Instant,
     onExpandDay: (LocalDate) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Daily", style = MaterialTheme.typography.titleLarge)
-        forecast.daily.forEach { day ->
+        forecast.daily.filter { !it.date.isBefore(today) }.sortedBy { it.date }.forEach { day ->
             DailyCard(
                 day = day,
-                hourly = forecast.hourly.filter { it.time.toLocalDate() == day.date },
+                hourly = forecast.hourly.filter { it.time.toLocalDate() == day.date && !it.time.toInstant().isBefore(now) },
                 settings = settings,
                 expanded = expandedDay == day.date,
                 onClick = { onExpandDay(day.date) }
@@ -531,13 +560,13 @@ private fun DailyCard(
         Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Image(
-                    painter = painterResource(WeatherCodeMapper.drawableRes(day.weatherCode ?: 0)),
-                    contentDescription = WeatherCodeMapper.condition(day.weatherCode ?: 0).label,
+                    painter = painterResource(WeatherCodeMapper.drawableRes(day.weatherCode ?: -1)),
+                    contentDescription = WeatherCodeMapper.condition(day.weatherCode ?: -1).label,
                     modifier = Modifier.size(24.dp)
                 )
                 Column(Modifier.weight(1f)) {
                     Text(day.date.format(DateTimeFormatter.ofPattern("EEE d MMM")), style = MaterialTheme.typography.titleMedium)
-                    Text(WeatherCodeMapper.condition(day.weatherCode ?: 0).label, style = MaterialTheme.typography.bodySmall)
+                    Text(WeatherCodeMapper.condition(day.weatherCode ?: -1).label, style = MaterialTheme.typography.bodySmall)
                 }
                 Text(day.minMax(settings), style = MaterialTheme.typography.titleMedium)
             }

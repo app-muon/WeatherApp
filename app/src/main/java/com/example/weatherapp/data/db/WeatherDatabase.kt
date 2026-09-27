@@ -14,15 +14,17 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         MarineCacheEntity::class,
         ProviderStatusEntity::class,
         WidgetSourcePreferenceEntity::class,
-        ForecastSourcePreferenceEntity::class
+        ForecastSourcePreferenceEntity::class,
+        MarineStatusEntity::class
     ],
-    version = 5,
+    version = 7,
     exportSchema = true
 )
 abstract class WeatherDatabase : RoomDatabase() {
     abstract fun locationDao(): LocationDao
     abstract fun forecastCacheDao(): ForecastCacheDao
     abstract fun marineCacheDao(): MarineCacheDao
+    abstract fun marineStatusDao(): MarineStatusDao
     abstract fun providerStatusDao(): ProviderStatusDao
     abstract fun widgetSourcePreferenceDao(): WidgetSourcePreferenceDao
     abstract fun forecastSourcePreferenceDao(): ForecastSourcePreferenceDao
@@ -41,9 +43,38 @@ abstract class WeatherDatabase : RoomDatabase() {
                     .addMigrations(MIGRATION_2_3)
                     .addMigrations(MIGRATION_3_4)
                     .addMigrations(MIGRATION_4_5)
+                    .addMigrations(MIGRATION_5_6)
+                    .addMigrations(MIGRATION_6_7)
                     .build()
                     .also { instance = it }
             }
+
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE marine_status ADD COLUMN unavailableAtEpochMillis INTEGER")
+            }
+        }
+
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE locations ADD COLUMN revision INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `marine_status` (
+                        `locationId` INTEGER NOT NULL,
+                        `lastAttemptAtEpochMillis` INTEGER,
+                        `lastSuccessAtEpochMillis` INTEGER,
+                        `lastError` TEXT,
+                        PRIMARY KEY(`locationId`),
+                        FOREIGN KEY(`locationId`) REFERENCES `locations`(`id`) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_marine_status_locationId` ON `marine_status` (`locationId`)")
+                db.execSQL("""
+                    INSERT INTO marine_status(locationId, lastAttemptAtEpochMillis, lastSuccessAtEpochMillis, lastError)
+                    SELECT locationId, fetchedAtEpochMillis, fetchedAtEpochMillis, NULL FROM marine_cache
+                """.trimIndent())
+            }
+        }
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {

@@ -27,7 +27,7 @@ object WeatherCodeMapper {
         95 -> WeatherCondition(code, "Thunderstorm", WeatherIcon.Thunderstorm)
         96 -> WeatherCondition(code, "Thunderstorm with hail", WeatherIcon.Thunderstorm)
         99 -> WeatherCondition(code, "Thunderstorm with heavy hail", WeatherIcon.Thunderstorm)
-        else -> WeatherCondition(code, "Weather code $code", WeatherIcon.Cloudy)
+        else -> WeatherCondition(code, "Conditions unavailable", WeatherIcon.Unknown)
     }
 
     fun drawableRes(code: Int): Int = when (condition(code).icon) {
@@ -38,6 +38,6 @@ object WeatherCodeMapper {
         WeatherIcon.Rain -> R.drawable.ic_weather_rain
         WeatherIcon.Snow -> R.drawable.ic_weather_snow
         WeatherIcon.Thunderstorm -> R.drawable.ic_weather_thunder
+        WeatherIcon.Unknown -> R.drawable.ic_weather_unknown
     }
 }
-

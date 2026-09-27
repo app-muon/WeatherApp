@@ -103,5 +103,6 @@ enum class WeatherIcon {
     Fog,
     Rain,
     Snow,
-    Thunderstorm
+    Thunderstorm,
+    Unknown
 }

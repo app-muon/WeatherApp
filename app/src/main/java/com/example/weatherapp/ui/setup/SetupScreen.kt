@@ -99,7 +99,7 @@ fun SetupScreen(viewModel: SetupViewModel) {
                     "%.4f, %.4f".format(result.latitude, result.longitude),
                     style = MaterialTheme.typography.bodySmall
                 )
-                Button(onClick = { viewModel.save(result) }) {
+                Button(onClick = { viewModel.save(result) }, enabled = !state.isSaving) {
                     Text(if (state.targetLocationId == null) "Add location" else "Replace location")
                 }
             }

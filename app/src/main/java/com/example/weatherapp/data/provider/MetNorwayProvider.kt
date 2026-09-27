@@ -7,6 +7,8 @@ import com.example.weatherapp.domain.model.DailyForecast
 import com.example.weatherapp.domain.model.HourlyForecast
 import com.example.weatherapp.domain.model.ProviderForecast
 import com.example.weatherapp.domain.model.WeatherUnits
+import com.example.weatherapp.domain.model.currentEstimate
+import java.time.Clock
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import java.time.Instant
@@ -17,7 +19,8 @@ import kotlin.math.roundToInt
 
 class MetNorwayProvider(
     private val api: MetNorwayApiClient,
-    private val gson: Gson
+    private val gson: Gson,
+    private val clock: Clock = Clock.systemUTC()
 ) : WeatherProvider {
     override val id = WeatherProviderIds.MET_NORWAY
     override val displayName = "Yr / MET Norway"
@@ -68,8 +71,8 @@ class MetNorwayProvider(
             providerId = id,
             providerName = displayName,
             locationId = location.id,
-            fetchedAt = Instant.now(),
-            current = hourly.firstOrNull()?.toCurrent(),
+            fetchedAt = clock.instant(),
+            current = hourly.currentEstimate(clock.instant())?.toCurrent(),
             hourly = hourly,
             daily = daily,
             attribution = "MET Norway"
@@ -115,7 +118,8 @@ private fun String.toWeatherCode(): Int = when {
     contains("fog") -> 45
     contains("partlycloudy") -> 2
     contains("cloudy") -> 3
-    else -> 0
+    contains("clearsky") || contains("fair") -> 0
+    else -> -1
 }
 
 private fun JsonObject.objOrNull(name: String): JsonObject? =

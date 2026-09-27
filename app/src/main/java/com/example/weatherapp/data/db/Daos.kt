@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
+import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -45,6 +46,9 @@ interface LocationDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(location: LocationEntity): Long
 
+    @Update
+    suspend fun update(location: LocationEntity)
+
     @Transaction
     @Query("SELECT * FROM locations ORDER BY displayOrder ASC")
     fun observeLocationsWithCache(): Flow<List<LocationWithCaches>>
@@ -56,6 +60,10 @@ interface LocationDao {
     @Transaction
     @Query("SELECT * FROM locations WHERE widgetOrder IS NOT NULL ORDER BY widgetOrder ASC LIMIT 2")
     suspend fun getWidgetLocationsWithCache(): List<LocationWithCaches>
+
+    @Transaction
+    @Query("SELECT * FROM locations WHERE widgetOrder IS NOT NULL ORDER BY widgetOrder ASC LIMIT 2")
+    fun observeWidgetLocationsWithCache(): Flow<List<LocationWithCaches>>
 }
 
 @Dao
@@ -72,6 +80,9 @@ interface ForecastCacheDao {
 
 @Dao
 interface ProviderStatusDao {
+    @Query("DELETE FROM provider_status WHERE locationId = :locationId")
+    suspend fun deleteForLocation(locationId: Long)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(status: ProviderStatusEntity)
 
@@ -99,9 +110,24 @@ interface ForecastSourcePreferenceDao {
 
 @Dao
 interface MarineCacheDao {
+    @Query("SELECT * FROM marine_cache WHERE locationId = :locationId")
+    suspend fun get(locationId: Long): MarineCacheEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(cache: MarineCacheEntity)
 
     @Query("DELETE FROM marine_cache WHERE locationId = :locationId")
+    suspend fun deleteForLocation(locationId: Long)
+}
+
+@Dao
+interface MarineStatusDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(status: MarineStatusEntity)
+
+    @Query("SELECT * FROM marine_status WHERE locationId = :locationId")
+    suspend fun get(locationId: Long): MarineStatusEntity?
+
+    @Query("DELETE FROM marine_status WHERE locationId = :locationId")
     suspend fun deleteForLocation(locationId: Long)
 }

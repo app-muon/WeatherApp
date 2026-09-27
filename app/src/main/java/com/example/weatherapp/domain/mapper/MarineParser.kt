@@ -15,20 +15,32 @@ class MarineParser {
 
     fun parse(root: JsonObject, referenceTime: ZonedDateTime): MarineConditions? {
         val zone = zone(root, referenceTime.zone)
+        require(root.get("hourly")?.isJsonObject == true) { "Missing marine hourly data" }
         val hourly = root.getAsJsonObject("hourly")
+        require(hourly.get("time")?.isJsonArray == true) { "Missing marine timestamps" }
         val times = hourly.getAsJsonArray("time")
+        val variables = listOf("sea_surface_temperature", "wave_height", "wave_direction", "wave_period")
+            .filter { hourly.has(it) }
+        require(variables.isNotEmpty()) { "Missing marine variables" }
+        variables.forEach { name ->
+            val values = hourly.get(name)
+            require(values.isJsonArray && values.asJsonArray.size() == times.size()) { "Invalid marine array: $name" }
+            require(values.asJsonArray.all { it.isJsonNull ||
+                (it.isJsonPrimitive && it.asJsonPrimitive.isNumber && it.asDouble.isFinite()) }) { "Invalid marine value: $name" }
+        }
+        val instants = times.map { ZonedDateTime.of(LocalDateTime.parse(it.asString), zone) }
         if (times.size() == 0) return null
 
         val bestIndex = (0 until times.size()).minByOrNull { index ->
             kotlin.math.abs(
-                ZonedDateTime.of(LocalDateTime.parse(times[index].asString), zone)
+                instants[index]
                     .toInstant()
                     .toEpochMilli() - referenceTime.toInstant().toEpochMilli()
             )
         } ?: return null
 
         return MarineConditions(
-            time = ZonedDateTime.of(LocalDateTime.parse(times[bestIndex].asString), zone),
+            time = instants[bestIndex],
             seaSurfaceTemperature = hourly.doubleAtOrNull("sea_surface_temperature", bestIndex),
             waveHeight = hourly.doubleAtOrNull("wave_height", bestIndex),
             waveDirection = hourly.intAtOrNull("wave_direction", bestIndex),

@@ -1,6 +1,7 @@
 package com.example.weatherapp.data.db
 
 import androidx.room.Embedded
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -18,7 +19,8 @@ data class LocationEntity(
     val longitude: Double,
     val timezone: String?,
     val displayOrder: Int,
-    val widgetOrder: Int?
+    val widgetOrder: Int?,
+    @ColumnInfo(defaultValue = "0") val revision: Long = 0
 )
 
 @Entity(
@@ -100,6 +102,20 @@ data class MarineCacheEntity(
     val rawJson: String
 )
 
+@Entity(
+    tableName = "marine_status",
+    foreignKeys = [ForeignKey(entity = LocationEntity::class, parentColumns = ["id"],
+        childColumns = ["locationId"], onDelete = ForeignKey.CASCADE)],
+    indices = [Index("locationId")]
+)
+data class MarineStatusEntity(
+    @PrimaryKey val locationId: Long,
+    val lastAttemptAtEpochMillis: Long?,
+    val lastSuccessAtEpochMillis: Long?,
+    val lastError: String?,
+    val unavailableAtEpochMillis: Long? = null
+)
+
 data class LocationWithForecastCache(
     @Embedded val location: LocationEntity,
     @Relation(parentColumn = "id", entityColumn = "locationId")
@@ -135,5 +151,7 @@ data class LocationWithCaches(
     @Relation(entity = WidgetSourcePreferenceEntity::class, parentColumn = "id", entityColumn = "locationId")
     val widgetSourcePreference: WidgetSourcePreferenceEntity?,
     @Relation(entity = ForecastSourcePreferenceEntity::class, parentColumn = "id", entityColumn = "locationId")
-    val forecastSourcePreference: ForecastSourcePreferenceEntity?
+    val forecastSourcePreference: ForecastSourcePreferenceEntity?,
+    @Relation(entity = MarineStatusEntity::class, parentColumn = "id", entityColumn = "locationId")
+    val marineStatus: MarineStatusEntity? = null
 )

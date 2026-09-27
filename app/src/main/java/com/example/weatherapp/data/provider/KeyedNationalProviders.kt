@@ -8,6 +8,9 @@ import com.example.weatherapp.domain.model.CurrentWeather
 import com.example.weatherapp.domain.model.DailyForecast
 import com.example.weatherapp.domain.model.HourlyForecast
 import com.example.weatherapp.domain.model.WeatherUnits
+import com.example.weatherapp.domain.model.currentEstimate
+import com.example.weatherapp.data.repository.ProviderConfigurationException
+import java.time.Clock
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonElement
@@ -82,7 +85,8 @@ class MetOfficeProvider(
 class AemetProvider(
     private val api: AemetApiClient,
     private val apiKey: String,
-    private val gson: Gson
+    private val gson: Gson,
+    private val clock: Clock = Clock.systemUTC()
 ) : WeatherProvider {
     private val municipalityMutex = Mutex()
     private var municipalityCache: List<AemetMunicipality>? = null
@@ -115,6 +119,7 @@ class AemetProvider(
 
     private suspend fun aemetPayload(url: String): JsonElement {
         val response = api.request(url = url, apiKey = apiKey)
+        if (response.intOrNull("estado") in listOf(400, 401, 403, 404)) throw ProviderConfigurationException()
         val description = response.stringOrNull("descripcion") ?: response.stringOrNull("estado")
         val dataUrl = response.stringOrNull("datos")
             ?: throw IllegalStateException(
@@ -166,8 +171,8 @@ class AemetProvider(
             providerId = id,
             providerName = displayName,
             locationId = location.id,
-            fetchedAt = Instant.now(),
-            current = hourly.firstOrNull()?.toCurrent(),
+            fetchedAt = clock.instant(),
+            current = hourly.currentEstimate(clock.instant())?.toCurrent(),
             hourly = hourly,
             daily = daily,
             attribution = "AEMET OpenData"
@@ -263,8 +268,7 @@ private fun HourlyForecast.toCurrent() = CurrentWeather(
 
 private fun List<HourlyForecast>.currentForecast(): CurrentWeather? {
     if (isEmpty()) return null
-    val now = ZonedDateTime.now(first().time.zone)
-    return minByOrNull { kotlin.math.abs(java.time.Duration.between(now, it.time).toMinutes()) }?.toCurrent()
+    return currentEstimate(Instant.now())?.toCurrent()
 }
 
 private fun JsonObject.metOfficeTimeSeries(): List<JsonObject> =

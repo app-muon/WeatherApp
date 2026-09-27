@@ -7,7 +7,10 @@ import androidx.lifecycle.viewModelScope
 import com.example.weatherapp.data.api.GeocodingResult
 import com.example.weatherapp.data.db.LocationEntity
 import com.example.weatherapp.data.repository.LocationRepository
-import com.example.weatherapp.data.repository.WeatherRepository
+import com.example.weatherapp.data.repository.RefreshCoordinator
+import com.example.weatherapp.data.repository.RefreshRequest
+import com.example.weatherapp.data.repository.ContentScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -18,13 +21,14 @@ data class SetupUiState(
     val targetLocationId: Long? = null,
     val results: List<GeocodingResult> = emptyList(),
     val isSearching: Boolean = false,
+    val isSaving: Boolean = false,
     val message: String? = null,
     val messageIsError: Boolean = false
 )
 
 class SetupViewModel(
     private val locationRepository: LocationRepository,
-    private val weatherRepository: WeatherRepository
+    private val coordinator: RefreshCoordinator
 ) : ViewModel() {
     private val _state = mutableStateOf(SetupUiState())
     val state: State<SetupUiState> = _state
@@ -62,17 +66,29 @@ class SetupViewModel(
     }
 
     fun save(result: GeocodingResult) {
+        if (_state.value.isSaving) return
+        val targetLocationId = _state.value.targetLocationId
+        _state.value = _state.value.copy(isSaving = true)
+        searchJob?.cancel()
         viewModelScope.launch {
-            val targetLocationId = _state.value.targetLocationId
-            val locationId = locationRepository.saveLocation(targetLocationId, result)
-            weatherRepository.initDefaultForecastSource(locationId)
-            weatherRepository.refreshLocation(locationId)
-            _state.value = _state.value.copy(
-                query = "",
-                results = emptyList(),
-                message = if (targetLocationId == null) "${result.name} added" else "${result.name} replaced",
-                messageIsError = false
-            )
+            var saved = false
+            try {
+                val locationId = locationRepository.saveLocation(targetLocationId, result)
+                saved = true
+                val label = if (targetLocationId == null) "${result.name} added" else "${result.name} replaced"
+                _state.value = _state.value.copy(query = "", results = emptyList(), isSearching = false,
+                    message = "$label · loading forecast…", messageIsError = false)
+                val outcomes = coordinator.refresh(RefreshRequest(listOf(locationId), ContentScope.Forecast))
+                _state.value = _state.value.copy(message = if (outcomes.any { it.usable }) label
+                    else "$label · forecast update failed. Retry on Forecasts.", messageIsError = false)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _state.value = _state.value.copy(message = if (saved) "Location saved · forecast unavailable"
+                    else "Could not save location. Please try again.", messageIsError = !saved)
+            } finally {
+                _state.value = _state.value.copy(isSaving = false)
+            }
         }
     }
 
@@ -95,7 +111,9 @@ class SetupViewModel(
             return
         }
         _state.value = _state.value.copy(isSearching = true, message = null)
-        val result = runCatching { locationRepository.search(query) }
+        val result = try { Result.success(locationRepository.search(query)) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { Result.failure(error) }
         _state.value = _state.value.copy(
             isSearching = false,
             results = result.getOrDefault(emptyList()),

@@ -1,37 +1,37 @@
 package com.example.weatherapp.data.repository
 
+import androidx.room.withTransaction
+import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import androidx.work.workDataOf
 import com.example.weatherapp.data.api.MarineApiClient
-import com.example.weatherapp.data.db.MarineCacheDao
-import com.example.weatherapp.data.db.MarineCacheEntity
-import com.example.weatherapp.data.db.ForecastCacheDao
-import com.example.weatherapp.data.db.ForecastCacheEntity
-import com.example.weatherapp.data.db.LocationDao
-import com.example.weatherapp.data.db.LocationEntity
-import com.example.weatherapp.data.db.ProviderStatusDao
-import com.example.weatherapp.data.db.ProviderStatusEntity
+import com.example.weatherapp.data.db.*
 import com.example.weatherapp.data.provider.WeatherProvider
 import com.example.weatherapp.data.provider.WeatherProviderIds
 import com.example.weatherapp.data.provider.countryCodeOrName
 import com.example.weatherapp.domain.mapper.ForecastParser
 import com.example.weatherapp.domain.mapper.MarineParser
 import com.example.weatherapp.domain.mapper.ProviderForecastJsonCodec
-import com.example.weatherapp.domain.model.MarineConditions
-import com.example.weatherapp.domain.model.ForecastSourcePreference
-import com.example.weatherapp.domain.model.ProviderForecast
-import com.example.weatherapp.domain.model.ProviderStatus
-import com.example.weatherapp.domain.model.WeatherUnits
+import com.example.weatherapp.domain.model.*
 import com.example.weatherapp.settings.WeatherSettingsRepository
 import com.example.weatherapp.worker.ForecastRefreshWorker
 import com.google.gson.Gson
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.combine
+import retrofit2.HttpException
+import java.time.Clock
+import java.time.Duration
 import java.time.Instant
+import java.util.concurrent.TimeUnit
 
 data class LocationForecast(
     val location: LocationEntity,
@@ -40,341 +40,232 @@ data class LocationForecast(
     val providerStatuses: List<ProviderStatus>,
     val marineConditions: MarineConditions?,
     val forecastSourcePreference: ForecastSourcePreference?,
+    val preferredProviderId: String,
+    val marineFetchedAt: Instant? = null,
+    val marineStatus: MarineStatusEntity? = null,
     val lastRefreshFailed: Boolean = false
-)
+) {
+    val usingFallback: Boolean get() = forecast != null && forecast.providerId != preferredProviderId
+    val preferredSourceError: String? get() = providerStatuses.find { it.providerId == preferredProviderId }?.lastError
+    val marineUnavailable: Boolean get() = marineStatus?.unavailableAtEpochMillis != null && marineStatus.lastError == null
+}
 
-data class ProviderOption(
-    val id: String,
-    val displayName: String,
-    val shortName: String
-)
+data class ProviderOption(val id: String, val displayName: String, val shortName: String)
 
 class WeatherRepository(
-    private val locationDao: LocationDao,
-    private val forecastCacheDao: ForecastCacheDao,
-    private val providerStatusDao: ProviderStatusDao,
-    private val forecastSourcePreferenceDao: com.example.weatherapp.data.db.ForecastSourcePreferenceDao,
-    private val marineCacheDao: MarineCacheDao,
+    private val database: WeatherDatabase,
     private val marineApi: MarineApiClient,
     private val settingsRepository: WeatherSettingsRepository,
     private val providers: List<WeatherProvider>,
     private val forecastParser: ForecastParser,
     private val marineParser: MarineParser,
-    private val forecastJsonCodec: ProviderForecastJsonCodec
-) {
+    private val forecastJsonCodec: ProviderForecastJsonCodec,
+    private val clock: Clock = Clock.systemUTC()
+) : RefreshStore {
     private val gson = Gson()
+    private val locationDao = database.locationDao()
+    private val forecastCacheDao = database.forecastCacheDao()
+    private val providerStatusDao = database.providerStatusDao()
+    private val preferenceDao = database.forecastSourcePreferenceDao()
+    private val marineCacheDao = database.marineCacheDao()
+    private val marineStatusDao = database.marineStatusDao()
 
     fun observeLocationForecasts(): Flow<List<LocationForecast>> =
-        locationDao.observeLocationsWithCache().map { rows ->
-            rows.map { row -> toLocationForecast(row) }
-        }
+        locationDao.observeLocationsWithCache().map { rows -> rows.map(::toLocationForecast) }
 
-    suspend fun getCachedLocationForecasts(): List<LocationForecast> =
-        locationDao.getLocationsWithCache().map { row ->
-            toLocationForecast(row)
-        }
+    fun observeWidgetForecasts(redraws: Flow<Instant> = kotlinx.coroutines.flow.flowOf(clock.instant())): Flow<List<LocationForecast>> =
+        combine(locationDao.observeWidgetLocationsWithCache(), redraws) { rows, _ -> rows.map(::toLocationForecast) }
 
-    suspend fun getCachedWidgetForecasts(): List<LocationForecast> =
-        locationDao.getWidgetLocationsWithCache().map { row ->
-            toLocationForecast(row)
-        }
+    suspend fun locationIds(): List<Long> = locationDao.getLocations().map { it.id }
+    override suspend fun location(id: Long): LocationEntity? = locationDao.getById(id)
 
-    suspend fun refreshAll(): Result<Unit> {
-        val locations = locationDao.getLocations()
-        var failure: Throwable? = null
-        locations.forEach { location ->
-            val result = refreshLocation(location)
-            if (result.isFailure) failure = result.exceptionOrNull()
-        }
-        return failure?.let { Result.failure(it) } ?: Result.success(Unit)
+    override suspend fun unavailableAt(location: LocationEntity, source: String): Instant? = database.withTransaction {
+        if (source != MARINE_SOURCE || locationDao.getById(location.id)?.revision != location.revision) return@withTransaction null
+        marineStatusDao.get(location.id)?.takeIf { it.lastError == null }?.unavailableAtEpochMillis?.let(Instant::ofEpochMilli)
     }
 
-    suspend fun refreshAllDisplayProviders(): Result<Unit> {
-        val rows = locationDao.getLocationsWithCache()
-        var failure: Throwable? = null
-        val settings = settingsRepository.settings.first()
-        val units = settings.toWeatherUnits()
-        rows.forEach { row ->
-            val result = refreshProviderFallback(
-                location = row.location,
-                providerIds = displayProviderFallbackOrder(row.location, row.forecastSourcePreference?.selectedProviderId),
-                units = units
-            )
-            if (result.isFailure) failure = result.exceptionOrNull()
+    override suspend fun isPermanentFailure(location: LocationEntity, source: String): Boolean =
+        (if (source == MARINE_SOURCE) marineStatusDao.get(location.id)?.lastError
+            else providerStatusDao.get(location.id, source)?.lastError) == CONFIGURATION_ERROR
+
+    override suspend fun sources(location: LocationEntity, scope: ContentScope): List<String> = when (scope) {
+        ContentScope.Marine -> listOf(MARINE_SOURCE)
+        ContentScope.Compare -> availableProviders(location).map { it.id }
+        ContentScope.Forecast -> fallbackOrder(location, preferenceDao.get(location.id)?.selectedProviderId)
+    }
+
+    override suspend fun cachedAt(location: LocationEntity, source: String): Instant? = database.withTransaction {
+        if (locationDao.getById(location.id)?.revision != location.revision) return@withTransaction null
+        if (source == MARINE_SOURCE) {
+            marineCacheDao.get(location.id)?.takeIf { cache ->
+                runCatching { marineParser.parse(cache.rawJson, clock.instant().atZone(location.zone()))?.hasData() == true }.getOrDefault(false)
+            }?.fetchedAtEpochMillis?.let(Instant::ofEpochMilli)
+        } else {
+            forecastCacheDao.get(location.id, source)?.let(::decodeCachedForecast)
+                ?.takeIf { it.hasData() }?.fetchedAt
         }
-        return failure?.let { Result.failure(it) } ?: Result.success(Unit)
     }
 
-    suspend fun refreshLocation(location: LocationEntity): Result<Unit> = runCatching {
-        refreshAvailableProviders(location)
-    }
-
-    suspend fun refreshAvailableProviders(location: LocationEntity) {
-        val settings = settingsRepository.settings.first()
-        val units = settings.toWeatherUnits()
-        val preferredId = resolveDefaultProvider(location, forecastSourcePreferenceDao.get(location.id)?.selectedProviderId)
-        var firstFailure: Throwable? = null
-        availableProviders(location).forEach { provider ->
-            val result = fetchAndCacheProvider(location, provider, units)
-            // Surface failures from the provider the user actually sees (their configured/default
-            // source) as well as Open-Meteo, instead of silently swallowing them.
-            if (
-                result.isFailure &&
-                firstFailure == null &&
-                (provider.id == preferredId || provider.id == WeatherProviderIds.OPEN_METEO)
-            ) {
-                firstFailure = result.exceptionOrNull()
+    override suspend fun fetch(location: LocationEntity, source: String): SourceOutcome {
+        val attempt = clock.millis()
+        if (!commit(location) {
+            if (source == MARINE_SOURCE) {
+                val old = marineStatusDao.get(location.id)
+                marineStatusDao.upsert(MarineStatusEntity(location.id, attempt, old?.lastSuccessAtEpochMillis, old?.lastError, old?.unavailableAtEpochMillis))
+            } else {
+                val old = providerStatusDao.get(location.id, source)
+                providerStatusDao.upsert(ProviderStatusEntity(location.id, source, attempt, old?.lastSuccessAtEpochMillis, old?.lastError))
             }
-        }
-        if (firstFailure != null) throw firstFailure as Throwable
-    }
-
-    suspend fun refreshLocation(locationId: Long): Result<Unit> {
-        val location = locationDao.getById(locationId)
-            ?: return Result.failure(IllegalArgumentException("Location not found"))
-        return refreshLocation(location)
-    }
-
-    suspend fun refreshWidgetLocations(): Result<Unit> {
-        val settings = settingsRepository.settings.first()
-        val units = settings.toWeatherUnits()
-        var failure: Throwable? = null
-        locationDao.getWidgetLocationsWithCache().forEach { row ->
-            val result = refreshProviderFallback(
-                location = row.location,
-                providerIds = displayProviderFallbackOrder(row.location, row.forecastSourcePreference?.selectedProviderId),
-                units = units
-            )
-            if (result.isFailure && failure == null) failure = result.exceptionOrNull()
-        }
-        return failure?.let { Result.failure(it) } ?: Result.success(Unit)
-    }
-
-    companion object {
-        const val STALE_AFTER_MILLIS = 6L * 60L * 60L * 1000L
-
-        fun enqueueRefreshIfStale(workManager: WorkManager, forecasts: List<LocationForecast>) {
-            val now = Instant.now().toEpochMilli()
-            val stale = forecasts.any { it.forecast == null || now - it.forecast.fetchedAt.toEpochMilli() > STALE_AFTER_MILLIS }
-            if (stale) {
-                val constraints = Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.CONNECTED)
-                    .build()
-                workManager.enqueueUniqueWork(
-                    ForecastRefreshWorker.STALE_REFRESH_WORK_NAME,
-                    ExistingWorkPolicy.KEEP,
-                    OneTimeWorkRequestBuilder<ForecastRefreshWorker>()
-                        .setConstraints(constraints)
-                        .build()
-                )
+        }) return SourceOutcome(location.id, source, RefreshResult.Discarded)
+        try {
+            if (source == MARINE_SOURCE) {
+                val raw = marineApi.marine(latitude = location.latitude, longitude = location.longitude)
+                val conditions = marineParser.parse(raw, clock.instant().atZone(location.zone()))
+                val completed = clock.millis()
+                if (conditions?.hasData() != true) {
+                    val committed = commit(location) {
+                        val old = marineStatusDao.get(location.id)
+                        marineStatusDao.upsert(MarineStatusEntity(location.id, attempt, old?.lastSuccessAtEpochMillis, null, completed))
+                    }
+                    return SourceOutcome(location.id, source, if (committed) RefreshResult.Unavailable else RefreshResult.Discarded)
+                }
+                val committed = commit(location) {
+                    marineCacheDao.upsert(MarineCacheEntity(location.id, completed, gson.toJson(raw)))
+                    marineStatusDao.upsert(MarineStatusEntity(location.id, attempt, completed, null))
+                }
+                return SourceOutcome(location.id, source, if (committed) RefreshResult.Updated else RefreshResult.Discarded)
             }
+            val provider = providers.firstOrNull { it.id == source }
+                ?: throw ProviderConfigurationException()
+            if (!provider.isAvailableFor(location)) throw ProviderConfigurationException()
+            val settings = settingsRepository.settings.first()
+            val result = provider.fetchForecast(location, WeatherUnits(settings.temperatureUnit, settings.windSpeedUnit, settings.precipitationUnit))
+            require(result.forecast.locationId == location.id && result.forecast.providerId == source && result.forecast.hasData()) { "Empty or invalid forecast" }
+            val completed = clock.instant()
+            val forecast = result.forecast.copy(fetchedAt = completed)
+            val normalised = forecastJsonCodec.encode(forecast)
+            val committed = commit(location) {
+                forecastCacheDao.upsert(ForecastCacheEntity(location.id, source, completed.toEpochMilli(), result.rawJson, normalised))
+                providerStatusDao.upsert(ProviderStatusEntity(location.id, source, attempt, completed.toEpochMilli(), null))
+            }
+            return SourceOutcome(location.id, source, if (committed) RefreshResult.Updated else RefreshResult.Discarded)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            currentCoroutineContext().ensureActive()
+            val permanent = error is ProviderConfigurationException ||
+                (error is HttpException && error.code() in 400..499 && error.code() !in listOf(408, 429))
+            val message = if (permanent) CONFIGURATION_ERROR else "Update failed. Check your connection and retry."
+            val committed = commit(location) {
+                if (source == MARINE_SOURCE) {
+                    val old = marineStatusDao.get(location.id)
+                    marineStatusDao.upsert(MarineStatusEntity(location.id, attempt, old?.lastSuccessAtEpochMillis, message))
+                } else {
+                    val old = providerStatusDao.get(location.id, source)
+                    providerStatusDao.upsert(ProviderStatusEntity(location.id, source, attempt, old?.lastSuccessAtEpochMillis, message))
+                }
+            }
+            return SourceOutcome(location.id, source, if (committed) RefreshResult.Failed else RefreshResult.Discarded, message, committed && !permanent)
         }
+    }
+
+    /** A replacement/delete cannot interleave between the revision check and either write. */
+    private suspend fun commit(location: LocationEntity, write: suspend () -> Unit): Boolean {
+        val committed = database.withTransaction {
+            currentCoroutineContext().ensureActive()
+            if (locationDao.getById(location.id)?.revision != location.revision) false
+            else { write(); true }
+        }
+        return committed
     }
 
     suspend fun providerOptions(location: LocationEntity): List<ProviderOption> =
-        listOf(ProviderOption(WeatherProviderIds.AUTO, "Default source", "Default")) +
-            availableProviders(location).map { ProviderOption(it.id, it.displayName, it.shortName) }
+        availableProviders(location).map { ProviderOption(it.id, it.displayName, it.shortName) }
 
     suspend fun setForecastSource(locationId: Long, providerId: String) {
-        forecastSourcePreferenceDao.upsert(com.example.weatherapp.data.db.ForecastSourcePreferenceEntity(locationId, providerId))
-    }
-
-    suspend fun initDefaultForecastSource(locationId: Long) {
-        val location = locationDao.getById(locationId) ?: return
-        val existing = forecastSourcePreferenceDao.get(locationId)
-        if (existing != null) return
-        val providerId = resolveDefaultProvider(location, null)
-        forecastSourcePreferenceDao.upsert(com.example.weatherapp.data.db.ForecastSourcePreferenceEntity(locationId, providerId))
-    }
-
-    private suspend fun refreshMarine(location: LocationEntity, weatherJson: String) {
-        val weatherForecast = runCatching {
-            forecastParser.parse(location.id, Instant.now(), gson.fromJson(weatherJson, com.google.gson.JsonObject::class.java))
-        }.getOrNull() ?: return marineCacheDao.deleteForLocation(location.id)
-
-        val marineJson = runCatching {
-            marineApi.marine(
-                latitude = location.latitude,
-                longitude = location.longitude
-            )
-        }.getOrNull() ?: return marineCacheDao.deleteForLocation(location.id)
-
-        val marineConditions = runCatching {
-            marineParser.parse(marineJson, weatherForecast.current?.time ?: java.time.ZonedDateTime.now())
-        }.getOrNull()
-
-        if (marineConditions == null) {
-            marineCacheDao.deleteForLocation(location.id)
-            return
+        database.withTransaction {
+            if (locationDao.getById(locationId) != null) preferenceDao.upsert(ForecastSourcePreferenceEntity(locationId, providerId))
         }
-
-        marineCacheDao.upsert(
-            MarineCacheEntity(
-                locationId = location.id,
-                fetchedAtEpochMillis = Instant.now().toEpochMilli(),
-                rawJson = gson.toJson(marineJson)
-            )
-        )
     }
 
-    private fun toLocationForecast(row: com.example.weatherapp.data.db.LocationWithCaches): LocationForecast {
-        val forecasts = row.forecastCaches.mapNotNull { cache -> decodeCachedForecast(cache) }
-            .filter { it.hasForecastData() }
-            .sortedWith(compareBy<ProviderForecast> { providerSortOrder(it.providerId) }.thenBy { it.providerName })
-        val forecast = selectDisplayForecast(
-            location = row.location,
-            forecastSourceProviderId = row.forecastSourcePreference?.selectedProviderId,
-            forecasts = forecasts
-        )
-        val marineConditions = row.marineCache?.let {
-            runCatching {
-                marineParser.parse(it.rawJson, forecast?.current?.time ?: java.time.Instant.ofEpochMilli(it.fetchedAtEpochMillis).atZone(java.time.ZoneId.systemDefault()))
-            }.getOrNull()
+    private suspend fun availableProviders(location: LocationEntity): List<WeatherProvider> =
+        providers.filter { it.isAvailableFor(location) }
+
+    fun defaultProvider(location: LocationEntity, preference: String? = null): String {
+        if (preference != null && preference != WeatherProviderIds.AUTO) return preference
+        return when {
+            location.countryCodeOrName() == "GB" && providers.any { it.id == WeatherProviderIds.MET_OFFICE && it.isConfigured } -> WeatherProviderIds.MET_OFFICE
+            location.countryCodeOrName() == "ES" && providers.any { it.id == WeatherProviderIds.AEMET && it.isConfigured } -> WeatherProviderIds.AEMET
+            else -> WeatherProviderIds.OPEN_METEO
+        }
+    }
+
+    private fun fallbackOrder(location: LocationEntity, preference: String?): List<String> =
+        listOf(defaultProvider(location, preference), WeatherProviderIds.OPEN_METEO, WeatherProviderIds.MET_NORWAY).distinct()
+
+    private fun toLocationForecast(row: LocationWithCaches): LocationForecast {
+        val forecasts = row.forecastCaches.mapNotNull(::decodeCachedForecast).filter { it.hasData() }
+        val preferred = defaultProvider(row.location, row.forecastSourcePreference?.selectedProviderId)
+        val candidates = fallbackOrder(row.location, preferred).mapNotNull { id -> forecasts.find { it.providerId == id } }
+        val failedIds = row.providerStatuses.filter { it.lastError != null }.map { it.providerId }.toSet()
+        val forecast = selectDisplayForecast(candidates, forecasts, failedIds, clock.instant())
+        val marine = row.marineCache?.let { cache ->
+            runCatching { marineParser.parse(cache.rawJson, clock.instant().atZone(row.location.zone())) }.getOrNull()
         }
         return LocationForecast(
             location = row.location,
             forecast = forecast,
             providerForecasts = forecasts,
-            providerStatuses = row.providerStatuses.map { it.toProviderStatus() },
-            marineConditions = marineConditions,
-            forecastSourcePreference = row.forecastSourcePreference?.let {
-                ForecastSourcePreference(it.locationId, it.selectedProviderId)
-            }
+            providerStatuses = row.providerStatuses.map { ProviderStatus(it.providerId, it.locationId,
+                it.lastFetchedAtEpochMillis?.let(Instant::ofEpochMilli), it.lastSuccessAtEpochMillis?.let(Instant::ofEpochMilli), it.lastError) },
+            marineConditions = marine,
+            forecastSourcePreference = row.forecastSourcePreference?.let { ForecastSourcePreference(it.locationId, it.selectedProviderId) },
+            preferredProviderId = preferred,
+            marineFetchedAt = row.marineCache?.fetchedAtEpochMillis?.let(Instant::ofEpochMilli),
+            marineStatus = row.marineStatus,
+            lastRefreshFailed = if (forecast == null) failedIds.isNotEmpty() else forecast.providerId in failedIds
         )
     }
-
-    private suspend fun fetchAndCacheProvider(
-        location: LocationEntity,
-        provider: WeatherProvider,
-        units: WeatherUnits
-    ): Result<Unit> {
-        val fetchedAt = Instant.now()
-        val previousStatus = providerStatusDao.get(location.id, provider.id)
-        providerStatusDao.upsert(
-            ProviderStatusEntity(
-                location.id,
-                provider.id,
-                fetchedAt.toEpochMilli(),
-                previousStatus?.lastSuccessAtEpochMillis,
-                null
-            )
-        )
-        return runCatching {
-            val result = provider.fetchForecast(location, units)
-            val forecast = result.forecast.copy(fetchedAt = fetchedAt)
-            forecastCacheDao.upsert(
-                ForecastCacheEntity(
-                    locationId = location.id,
-                    providerId = provider.id,
-                    fetchedAtEpochMillis = fetchedAt.toEpochMilli(),
-                    rawJson = result.rawJson,
-                    normalisedJson = forecastJsonCodec.encode(forecast)
-                )
-            )
-            providerStatusDao.upsert(
-                ProviderStatusEntity(location.id, provider.id, fetchedAt.toEpochMilli(), fetchedAt.toEpochMilli(), null)
-            )
-            if (provider.id == WeatherProviderIds.OPEN_METEO) {
-                refreshMarine(location, result.rawJson)
-            }
-        }.onFailure { error ->
-            providerStatusDao.upsert(
-                ProviderStatusEntity(
-                    location.id,
-                    provider.id,
-                    fetchedAt.toEpochMilli(),
-                    previousStatus?.lastSuccessAtEpochMillis,
-                    error.message ?: error::class.java.simpleName
-                )
-            )
-        }
-    }
-
-    private suspend fun refreshProviderFallback(
-        location: LocationEntity,
-        providerIds: List<String>,
-        units: WeatherUnits
-    ): Result<Unit> {
-        var firstFailure: Throwable? = null
-        for (providerId in providerIds) {
-            val provider = providers.firstOrNull { it.id == providerId } ?: continue
-            if (!runCatching { provider.isAvailableFor(location) }.getOrDefault(false)) continue
-            val result = fetchAndCacheProvider(location, provider, units)
-            if (result.isSuccess) return Result.success(Unit)
-            if (firstFailure == null) firstFailure = result.exceptionOrNull()
-        }
-        return firstFailure?.let { Result.failure(it) } ?: Result.success(Unit)
-    }
-
-    private suspend fun availableProviders(location: LocationEntity): List<WeatherProvider> =
-        providers.filter { provider -> runCatching { provider.isAvailableFor(location) }.getOrDefault(false) }
-
-    private fun resolveDefaultProvider(location: LocationEntity, forecastSourceProviderId: String?): String {
-        if (forecastSourceProviderId != null && forecastSourceProviderId != WeatherProviderIds.AUTO) return forecastSourceProviderId
-        val countryCode = location.countryCodeOrName()
-        return when {
-            countryCode == "GB" && providers.any { it.id == WeatherProviderIds.MET_OFFICE && it.isConfigured } -> WeatherProviderIds.MET_OFFICE
-            countryCode == "ES" && providers.any { it.id == WeatherProviderIds.AEMET && it.isConfigured } -> WeatherProviderIds.AEMET
-            else -> WeatherProviderIds.OPEN_METEO
-        }
-    }
-
-    private fun displayProviderFallbackOrder(location: LocationEntity, forecastSourceProviderId: String?): List<String> {
-        val requested = resolveDefaultProvider(location, forecastSourceProviderId)
-        return listOf(requested, WeatherProviderIds.OPEN_METEO, WeatherProviderIds.MET_NORWAY).distinct()
-    }
-
-    private fun selectDisplayForecast(
-        location: LocationEntity,
-        forecastSourceProviderId: String?,
-        forecasts: List<ProviderForecast>
-    ): ProviderForecast? {
-        val candidates = displayProviderFallbackOrder(location, forecastSourceProviderId)
-            .mapNotNull { id -> forecasts.firstOrNull { it.providerId == id } }
-        return candidates.firstOrNull { !it.isStale() }
-            ?: candidates.firstOrNull()
-            ?: forecasts.firstOrNull { !it.isStale() }
-            ?: forecasts.firstOrNull()
-    }
-
-    private fun ProviderForecast.isStale(now: Long = Instant.now().toEpochMilli()): Boolean =
-        now - fetchedAt.toEpochMilli() > STALE_AFTER_MILLIS
 
     private fun decodeCachedForecast(cache: ForecastCacheEntity): ProviderForecast? =
-        runCatching { forecastJsonCodec.decode(cache.normalisedJson) }
-            .getOrElse {
-                if (cache.providerId == WeatherProviderIds.OPEN_METEO) {
-                    runCatching {
-                        forecastParser.parse(cache.locationId, cache.fetchedAtEpochMillis, cache.rawJson)
-                            .copy(providerId = WeatherProviderIds.OPEN_METEO, providerName = "Open-Meteo")
-                    }.getOrNull()
-                } else {
-                    null
-                }
+        runCatching { forecastJsonCodec.decode(cache.normalisedJson) }.getOrNull()
+            ?: if (cache.providerId == WeatherProviderIds.OPEN_METEO) runCatching {
+                forecastParser.parse(cache.locationId, cache.fetchedAtEpochMillis, cache.rawJson)
+                    .copy(providerId = WeatherProviderIds.OPEN_METEO, providerName = "Open-Meteo")
+            }.getOrNull() else null
+
+    companion object {
+        const val STALE_AFTER_MILLIS = 6L * 60 * 60 * 1000
+        private const val CONFIGURATION_ERROR = "Source unavailable. Check its configuration."
+
+        fun enqueueRefreshIfStale(workManager: WorkManager, forecasts: List<LocationForecast>, now: Instant = Instant.now()) {
+            if (forecasts.any { !isFresh(it.forecast?.fetchedAt, now, Duration.ofMillis(STALE_AFTER_MILLIS)) }) {
+                workManager.enqueueUniqueWork(ForecastRefreshWorker.STALE_REFRESH_WORK_NAME, ExistingWorkPolicy.KEEP,
+                    OneTimeWorkRequestBuilder<ForecastRefreshWorker>()
+                        .setInputData(workDataOf(ForecastRefreshWorker.SKIP_PERMANENT_FAILURES to true))
+                        .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                        .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build())
             }
-
-    private fun providerSortOrder(providerId: String): Int = when (providerId) {
-        WeatherProviderIds.OPEN_METEO -> 0
-        WeatherProviderIds.MET_NORWAY -> 1
-        WeatherProviderIds.MET_OFFICE -> 2
-        WeatherProviderIds.AEMET -> 3
-        else -> 99
+        }
     }
-
-    private fun ProviderForecast.hasForecastData(): Boolean =
-        current != null || hourly.isNotEmpty() || daily.isNotEmpty()
 }
 
-private fun com.example.weatherapp.settings.WeatherSettings.toWeatherUnits() = WeatherUnits(
-    temperatureUnit = temperatureUnit,
-    windSpeedUnit = windSpeedUnit,
-    precipitationUnit = precipitationUnit
-)
+class ProviderConfigurationException : IllegalStateException("Provider is not configured")
 
-private fun ProviderStatusEntity.toProviderStatus() = ProviderStatus(
-    providerId = providerId,
-    locationId = locationId,
-    lastFetchedAt = lastFetchedAtEpochMillis?.let { Instant.ofEpochMilli(it) },
-    lastSuccessAt = lastSuccessAtEpochMillis?.let { Instant.ofEpochMilli(it) },
-    lastError = lastError
-)
+fun selectDisplayForecast(candidates: List<ProviderForecast>, all: List<ProviderForecast>, failedIds: Set<String>, now: Instant): ProviderForecast? =
+    candidates.firstOrNull { it.providerId !in failedIds && isFresh(it.fetchedAt, now, FOREGROUND_MAX_AGE) }
+        ?: candidates.firstOrNull { it.providerId !in failedIds && isFresh(it.fetchedAt, now, Duration.ofHours(6)) }
+        ?: all.maxByOrNull { it.fetchedAt }
+
+fun MarineConditions.hasData(): Boolean = listOf(seaSurfaceTemperature, waveHeight, wavePeriod, waveDirection?.toDouble()).any { it?.isFinite() == true }
+
+fun ProviderForecast.hasData(): Boolean {
+    fun valid(values: List<Double?>) = values.all { it == null || it.isFinite() }
+    fun known(code: Int?) = code != null && com.example.weatherapp.domain.mapper.WeatherCodeMapper.condition(code).icon != WeatherIcon.Unknown
+    if (current?.let { !valid(listOf(it.temperature, it.feelsLike, it.precipitation, it.rain, it.pressure, it.windSpeed)) } == true ||
+        hourly.any { !valid(listOf(it.temperature, it.feelsLike, it.precipitation, it.rain, it.pressure, it.windSpeed, it.visibility, it.uvIndex)) } ||
+        daily.any { !valid(listOf(it.tempMin, it.tempMax, it.precipitationSum, it.rainSum, it.windSpeedMax, it.uvIndexMax)) }) return false
+    return current?.let { it.temperature != null || it.windSpeed != null || known(it.weatherCode) } == true ||
+        hourly.any { it.temperature != null || it.windSpeed != null || known(it.weatherCode) } ||
+        daily.any { it.tempMin != null || it.tempMax != null || known(it.weatherCode) }
+}

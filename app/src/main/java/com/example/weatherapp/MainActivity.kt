@@ -33,9 +33,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -48,6 +46,14 @@ import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.createSavedStateHandle
+import androidx.lifecycle.viewmodel.CreationExtras
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.delay
+import java.util.UUID
+import com.example.weatherapp.ui.forecast.AppPage
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.weatherapp.ui.forecast.ForecastScreen
 import com.example.weatherapp.ui.forecast.ForecastSourceSection
@@ -56,7 +62,6 @@ import com.example.weatherapp.ui.forecast.ForecastUiState
 import com.example.weatherapp.ui.forecast.WidgetSelectionSection
 import com.example.weatherapp.ui.setup.SetupScreen
 import com.example.weatherapp.ui.setup.SetupViewModel
-import com.example.weatherapp.ui.widget.updateWeatherWidgets
 
 private val CyberpunkColorScheme = darkColorScheme(
     primary = Color(0xFF00E5FF),
@@ -82,38 +87,58 @@ private val CyberpunkColorScheme = darkColorScheme(
 )
 
 class MainActivity : ComponentActivity() {
-    private var selectedLocationFromIntent by mutableLongStateOf(0)
+    private var navigationEvent by mutableStateOf<WidgetNavigationEvent?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        selectedLocationFromIntent = intent.locationIdExtra()
+        navigationEvent = if (savedInstanceState?.containsKey("widgetEvent") == true) {
+            WidgetNavigationEvent(savedInstanceState.getString("widgetEvent")!!,
+                savedInstanceState.getLong("widgetLocation"), savedInstanceState.getBoolean("widgetChooseLocations"))
+        } else if (savedInstanceState == null) intent.navigationEvent() else null
         setContent {
-            WeatherApp(selectedLocationFromIntent)
+            WeatherApp(navigationEvent)
         }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        selectedLocationFromIntent = intent.locationIdExtra()
+        navigationEvent = intent.navigationEvent()
     }
 
-    private fun Intent.locationIdExtra(): Long = getLongExtra(EXTRA_LOCATION_ID, 0)
+    override fun onSaveInstanceState(outState: Bundle) {
+        navigationEvent?.let {
+            outState.putString("widgetEvent", it.id)
+            outState.putLong("widgetLocation", it.locationId)
+            outState.putBoolean("widgetChooseLocations", it.chooseLocations)
+        }
+        super.onSaveInstanceState(outState)
+    }
+
+    private fun Intent.navigationEvent(): WidgetNavigationEvent? =
+        if (hasExtra(EXTRA_LOCATION_ID) || hasExtra(EXTRA_LOCATIONS_PAGE))
+            WidgetNavigationEvent(UUID.randomUUID().toString(), getLongExtra(EXTRA_LOCATION_ID, 0), getBooleanExtra(EXTRA_LOCATIONS_PAGE, false))
+        else null
 
     companion object {
         const val EXTRA_LOCATION_ID = "locationId"
+        const val EXTRA_LOCATIONS_PAGE = "locationsPage"
     }
 }
 
+private data class WidgetNavigationEvent(val id: String, val locationId: Long, val chooseLocations: Boolean)
+
 @Composable
-private fun WeatherApp(selectedLocationId: Long) {
+private fun WeatherApp(navigationEvent: WidgetNavigationEvent?) {
     val app = androidx.compose.ui.platform.LocalContext.current.applicationContext as WeatherApplication
     val forecastViewModel: ForecastViewModel = viewModel(
-        factory = simpleFactory {
+        factory = simpleFactory { extras ->
             ForecastViewModel(
                 locationRepository = app.container.locationRepository,
                 weatherRepository = app.container.weatherRepository,
-                settingsRepository = app.container.settingsRepository
+                settingsRepository = app.container.settingsRepository,
+                coordinator = app.container.refreshCoordinator,
+                savedState = extras.createSavedStateHandle()
             )
         }
     )
@@ -121,13 +146,23 @@ private fun WeatherApp(selectedLocationId: Long) {
         factory = simpleFactory {
             SetupViewModel(
                 locationRepository = app.container.locationRepository,
-                weatherRepository = app.container.weatherRepository
+                coordinator = app.container.refreshCoordinator
             )
         }
     )
 
-    LaunchedEffect(selectedLocationId) {
-        if (selectedLocationId > 0) forecastViewModel.selectLocation(selectedLocationId)
+    LaunchedEffect(navigationEvent) {
+        navigationEvent?.let { forecastViewModel.widgetNavigation(it.id, it.locationId, it.chooseLocations) }
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            forecastViewModel.onResume()
+            while (true) {
+                delay(60_000)
+                forecastViewModel.updateTime()
+            }
+        }
     }
 
     val view = LocalView.current
@@ -183,12 +218,7 @@ private fun WeatherRoot(
     padding: PaddingValues
 ) {
     val state by forecastViewModel.state
-    val context = androidx.compose.ui.platform.LocalContext.current
-    var page by remember { mutableStateOf(AppPage.Forecasts) }
-
-    LaunchedEffect(state.items.map { it.location.id to it.forecast?.fetchedAt }) {
-        updateWeatherWidgets(context)
-    }
+    val page = state.navigation.page
 
     Column(
         modifier = Modifier
@@ -199,12 +229,13 @@ private fun WeatherRoot(
             page = page,
             showRefresh = page == AppPage.Forecasts,
             refreshEnabled = state.items.isNotEmpty() && !state.isRefreshing,
-            onSelectPage = { page = it },
-            onRefresh = forecastViewModel::refreshAllLocations
+            onSelectPage = forecastViewModel::selectPage,
+            refreshLabel = "Refresh ${state.navigation.tab.name.lowercase()} for ${state.selected?.location?.name ?: "selected location"}",
+            onRefresh = forecastViewModel::refreshSelected
         )
         PullToRefreshBox(
             isRefreshing = page == AppPage.Forecasts && state.isRefreshing,
-            onRefresh = { if (page == AppPage.Forecasts) forecastViewModel.refreshAllLocations() },
+            onRefresh = { if (page == AppPage.Forecasts) forecastViewModel.refreshSelected() },
             modifier = Modifier.fillMaxSize()
         ) {
             LazyColumn(
@@ -214,12 +245,9 @@ private fun WeatherRoot(
             ) {
                 when (page) {
                     AppPage.Forecasts -> {
-                        if (state.items.isEmpty() || state.refreshMessage != null) {
+                        if (state.items.isEmpty()) {
                             item {
-                                ForecastStatus(
-                                    isEmpty = state.items.isEmpty(),
-                                    refreshMessage = state.refreshMessage
-                                )
+                                Text(state.loadError ?: if (state.locationsLoaded) "Add a location on the Locations page to see the forecast." else "Loading locations…")
                             }
                         }
                         if (state.items.isNotEmpty()) {
@@ -228,7 +256,7 @@ private fun WeatherRoot(
                                     state = state,
                                     onSelectLocation = forecastViewModel::selectLocation,
                                     onSelectComparisonDay = forecastViewModel::selectComparisonDay,
-                                    onOpenCompare = forecastViewModel::refreshComparisonForSelected,
+                                    onSelectTab = forecastViewModel::selectTab,
                                     onRefresh = forecastViewModel::refreshSelected,
                                     onExpandDay = forecastViewModel::toggleExpandedDay
                                 )
@@ -251,28 +279,12 @@ private fun WeatherRoot(
     }
 }
 
-private enum class AppPage(val title: String) {
-    Forecasts("Forecasts"),
-    Locations("Locations")
-}
-
-@Composable
-private fun ForecastStatus(isEmpty: Boolean, refreshMessage: String?) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        if (isEmpty) {
-            Text("Add a location on the Locations page to see the forecast.")
-        }
-        refreshMessage?.let {
-            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
-        }
-    }
-}
-
 @Composable
 private fun AppPageBar(
     page: AppPage,
     showRefresh: Boolean,
     refreshEnabled: Boolean,
+    refreshLabel: String,
     onSelectPage: (AppPage) -> Unit,
     onRefresh: () -> Unit
 ) {
@@ -294,7 +306,7 @@ private fun AppPageBar(
         ) {
             Icon(
                 painter = painterResource(com.example.weatherapp.R.drawable.ic_refresh),
-                contentDescription = "Refresh all forecasts"
+                contentDescription = refreshLabel
             )
         }
     }
@@ -335,8 +347,8 @@ private fun LocationsPage(
     }
 }
 
-private fun <T : ViewModel> simpleFactory(create: () -> T): ViewModelProvider.Factory =
+private fun <T : ViewModel> simpleFactory(create: (CreationExtras) -> T): ViewModelProvider.Factory =
     object : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
-        override fun <T : ViewModel> create(modelClass: Class<T>): T = create() as T
+        override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T = create(extras) as T
     }

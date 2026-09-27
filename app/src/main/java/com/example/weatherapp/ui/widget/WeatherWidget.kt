@@ -1,8 +1,20 @@
 package com.example.weatherapp.ui.widget
 
 import android.content.Context
+import android.content.ComponentCallbacks
+import android.content.res.Configuration
+import android.appwidget.AppWidgetManager
 import android.content.Intent
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.Image
@@ -12,223 +24,210 @@ import androidx.glance.LocalSize
 import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
+import androidx.glance.appwidget.SizeMode
 import androidx.glance.appwidget.action.actionStartActivity
 import androidx.glance.appwidget.provideContent
 import androidx.glance.appwidget.updateAll
 import androidx.glance.background
-import androidx.glance.layout.Alignment
-import androidx.glance.layout.Column
-import androidx.glance.layout.Row
-import androidx.glance.layout.Spacer
-import androidx.glance.layout.fillMaxSize
-import androidx.glance.layout.fillMaxWidth
-import androidx.glance.layout.height
-import androidx.glance.layout.padding
-import androidx.glance.layout.size
-import androidx.glance.layout.width
+import androidx.glance.layout.*
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
+import androidx.glance.semantics.semantics
+import androidx.glance.semantics.contentDescription
 import androidx.work.WorkManager
 import com.example.weatherapp.MainActivity
-import com.example.weatherapp.R
 import com.example.weatherapp.WeatherApplication
-import com.example.weatherapp.data.repository.LocationForecast
-import com.example.weatherapp.data.repository.WeatherRepository
+import com.example.weatherapp.data.repository.*
 import com.example.weatherapp.domain.mapper.WeatherCodeMapper
-import com.example.weatherapp.domain.model.DailyForecast
-import com.example.weatherapp.domain.model.Forecast
+import com.example.weatherapp.domain.model.zone
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+
+private val cyan = ColorProvider(Color(0xFF00E5FF))
+private val primary = ColorProvider(Color(0xFFE8F7FF))
+private val secondary = ColorProvider(Color(0xFFC5D8DE))
 
 class WeatherWidget : GlanceAppWidget() {
+    override val sizeMode: SizeMode = SizeMode.Exact
+
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val container = (context.applicationContext as WeatherApplication).container
-        val forecasts = container.weatherRepository.getCachedWidgetForecasts()
-        WeatherRepository.enqueueRefreshIfStale(WorkManager.getInstance(context), forecasts)
+        val forecasts = container.weatherRepository.observeWidgetForecasts(container.widgetTime)
+        val initial = forecasts.first()
+        val initialMetrics = measureWidgetLayout(context)
+        WeatherRepository.enqueueRefreshIfStale(WorkManager.getInstance(context), initial)
         provideContent {
-            WeatherWidgetContent(forecasts)
+            var layoutMetrics by remember { mutableStateOf(initialMetrics) }
+            DisposableEffect(context) {
+                val listener = object : ComponentCallbacks {
+                    override fun onConfigurationChanged(config: Configuration) {
+                        layoutMetrics = measureWidgetLayout(context.createConfigurationContext(config))
+                    }
+                    override fun onLowMemory() = Unit
+                }
+                context.registerComponentCallbacks(listener)
+                onDispose { context.unregisterComponentCallbacks(listener) }
+            }
+            ObserveWeatherWidget(forecasts, initial, container.refreshCoordinator.activity, container.widgetTime, layoutMetrics)
         }
     }
+}
+
+@Composable
+internal fun ObserveWeatherWidget(
+    forecasts: Flow<List<LocationForecast>>,
+    initial: List<LocationForecast>,
+    refreshActivity: StateFlow<RefreshActivity>,
+    time: StateFlow<Instant>,
+    layoutMetrics: WidgetLayoutMetrics
+) {
+    val items by forecasts.collectAsState(initial)
+    val activity by refreshActivity.collectAsState()
+    val now by time.collectAsState()
+    WeatherWidgetContent(items, activity, now, layoutMetrics)
 }
 
 class WeatherWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = WeatherWidget()
+
+    override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
+        (context.applicationContext as WeatherApplication).container.widgetTime.value = Instant.now()
+        super.onUpdate(context, appWidgetManager, appWidgetIds)
+    }
 }
 
 @Composable
-private fun WeatherWidgetContent(items: List<LocationForecast>) {
+internal fun WeatherWidgetContent(items: List<LocationForecast>, activity: RefreshActivity, now: Instant, layoutMetrics: WidgetLayoutMetrics) {
     val context = LocalContext.current
-    val widgetSize = LocalSize.current
-    val headerHeight = 12.dp
-    val rowHeight = ((widgetSize.height - 14.dp - headerHeight) / 2).coerceIn(30.dp, 58.dp)
+    val size = LocalSize.current
+    val layout = chooseWidgetLayout(size.width.value, size.height.value, layoutMetrics, items.size.coerceIn(1, 2))
     Column(
-        modifier = GlanceModifier
-            .fillMaxSize()
-            .background(Color(0xFF00E5FF))
-            .padding(2.dp)
-            .background(Color(0xFFFF3DF2))
-            .padding(1.dp)
-            .background(Color(0xFF050711))
-            .padding(start = 5.dp, top = 5.dp, end = 2.dp, bottom = 5.dp),
+        modifier = GlanceModifier.fillMaxSize()
+            .background(Color(0xFF00E5FF)).padding(2.dp)
+            .background(Color(0xFFFF3DF2)).padding(1.dp)
+            .background(Color(0xFF050711)).padding(5.dp),
         verticalAlignment = Alignment.Vertical.Top
     ) {
-        when (items.size) {
-            0 -> EmptyWidgetText("Tap to choose locations", context, 0)
-            1 -> {
-                WidgetLabelRow(items[0].forecast)
-                WeatherWidgetRow(items[0], context, rowHeight)
-                Spacer(GlanceModifier.height(2.dp))
-                EmptyWidgetText("Add second location", context, items[0].location.id, rowHeight)
+        when {
+            items.isEmpty() -> OpenLocationsText("Choose locations", context)
+            layout == WidgetLayout.Enlarge -> {
+                Text("Enlarge widget to see both forecasts",
+                    modifier = GlanceModifier.fillMaxSize().clickable(openAppAction(context, items.first().location.id)).padding(4.dp),
+                    style = TextStyle(fontSize = 14.sp, color = cyan))
             }
             else -> {
-                WidgetLabelRow(items[0].forecast ?: items[1].forecast)
-                WeatherWidgetRow(items[0], context, rowHeight)
-                Spacer(GlanceModifier.height(2.dp))
-                WeatherWidgetRow(items[1], context, rowHeight)
+                items.take(2).forEachIndexed { index, item ->
+                    if (index > 0) Spacer(GlanceModifier.height(6.dp))
+                    WeatherWidgetRow(item, widgetIsUpdating(item, activity), context, now,
+                        compact = layout == WidgetLayout.Compact,
+                        refreshProblem = activity.failure(item.location, ContentScope.Forecast))
+                }
+                if (items.size == 1) {
+                    Spacer(GlanceModifier.height(6.dp))
+                    OpenLocationsText("Add second location", context)
+                }
             }
         }
     }
 }
 
 @Composable
-private fun WidgetLabelRow(forecast: Forecast?) {
-    Row(
-        modifier = GlanceModifier
-            .fillMaxWidth()
-            .height(12.dp),
-        verticalAlignment = Alignment.Vertical.CenterVertically
-    ) {
-        Spacer(GlanceModifier.width(82.dp))
-        HeaderCell("Now", 52.dp)
-        forecast?.daily?.take(3)?.forEachIndexed { index, day ->
-            HeaderCell(
-                when (index) {
-                    0 -> "Today"
-                    else -> day.date.format(DateTimeFormatter.ofPattern("EEE"))
-                },
-                68.dp
-            )
-        } ?: repeat(3) { index ->
-            HeaderCell(if (index == 0) "Today" else "-", 68.dp)
-        }
-    }
-}
-
-@Composable
-private fun HeaderCell(text: String, width: androidx.compose.ui.unit.Dp) {
-    Text(
-        text = text,
-        modifier = GlanceModifier.width(width),
-        style = TextStyle(fontSize = 9.sp, color = ColorProvider(R.color.widget_text_secondary))
-    )
-}
-
-@Composable
-private fun WeatherWidgetRow(item: LocationForecast, context: Context, rowHeight: androidx.compose.ui.unit.Dp) {
+private fun WeatherWidgetRow(item: LocationForecast, active: Boolean, context: Context, now: Instant, compact: Boolean, refreshProblem: String?) {
     val forecast = item.forecast
-    Row(
-        modifier = GlanceModifier
-            .fillMaxWidth()
-            .height(rowHeight)
-            .clickable(openAppAction(context, item.location.id)),
-        verticalAlignment = Alignment.Vertical.CenterVertically
-    ) {
-        Text(
-            text = item.location.name.take(16),
-            modifier = GlanceModifier.width(82.dp),
-            style = TextStyle(fontWeight = FontWeight.Bold, fontSize = 15.sp, color = ColorProvider(R.color.widget_text_cyan))
-        )
-        if (forecast == null) {
-            Text("No cache", style = TextStyle(fontSize = 14.sp, color = ColorProvider(R.color.widget_text_secondary)))
-        } else {
-            CurrentCell(forecast)
-            forecast.daily.take(3).forEach { day ->
-                DailyCell(day)
+    val zone = item.location.zone()
+    val today = now.atZone(zone).toLocalDate()
+    Column(GlanceModifier.fillMaxWidth().clickable(openAppAction(context, item.location.id))) {
+        val status = refreshProblem ?: widgetStatus(item, active, now)
+        if (compact) {
+            Row(GlanceModifier.fillMaxWidth().semantics { contentDescription = "${item.location.name}. $status" }) {
+                Text(item.location.name, modifier = GlanceModifier.defaultWeight(), maxLines = 1,
+                    style = TextStyle(fontWeight = FontWeight.Bold, fontSize = 13.sp, color = cyan))
+                Text(if (refreshProblem != null) "Update failed" else compactWidgetStatus(item, active),
+                    modifier = GlanceModifier.defaultWeight(), maxLines = 1,
+                    style = TextStyle(fontSize = 10.sp, color = secondary))
             }
-            if (isStale(forecast)) {
-                Text("\u21BB", style = TextStyle(fontSize = 14.sp, color = ColorProvider(R.color.widget_text_yellow)))
+        } else {
+            Text(item.location.name, maxLines = 1,
+                style = TextStyle(fontWeight = FontWeight.Bold, fontSize = 13.sp, color = cyan))
+            Text(status, maxLines = 1, style = TextStyle(fontSize = 10.sp, color = secondary))
+        }
+        Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.Vertical.CenterVertically) {
+            val current = forecast?.current
+            val conditionsTime = current?.time?.withZoneSameInstant(zone)
+            val currentLabel = if (conditionsTime == null) "Now"
+                else conditionsTime.format(DateTimeFormatter.ofPattern(if (conditionsTime.toLocalDate() == today) "HH:mm" else "d/M HH:mm"))
+            WeatherCell(currentLabel, current?.weatherCode, current?.temperature.temp(), GlanceModifier.defaultWeight())
+            repeat(3) { offset ->
+                val date = today.plusDays(offset.toLong())
+                val day = forecast?.daily?.find { it.date == date }
+                WeatherCell(date.format(DateTimeFormatter.ofPattern("EEE d")), day?.weatherCode,
+                    day?.let { it.tempMax.temp() + "/" + it.tempMin.temp() } ?: "—", GlanceModifier.defaultWeight())
             }
         }
     }
 }
 
+private fun compactWidgetStatus(item: LocationForecast, active: Boolean): String {
+    if (active) return "Updating…"
+    val forecast = item.forecast ?: return if (item.lastRefreshFailed) "Update failed" else "Unavailable"
+    val time = forecast.fetchedAt.atZone(item.location.zone()).format(DateTimeFormatter.ofPattern("d/M HH:mm"))
+    return (if (item.lastRefreshFailed) "Failed · " else if (item.usingFallback) "Fallback · " else "") + time
+}
+
 @Composable
-private fun CurrentCell(forecast: Forecast) {
-    Row(
-        modifier = GlanceModifier.width(52.dp),
-        verticalAlignment = Alignment.Vertical.CenterVertically
-    ) {
-        WeatherImage(forecast.current?.weatherCode ?: 0)
-        Text(
-            text = forecast.current?.temperature.temp(),
-            style = TextStyle(fontWeight = FontWeight.Medium, fontSize = 14.sp, color = ColorProvider(R.color.widget_text_primary))
-        )
+private fun WeatherCell(label: String, code: Int?, temperature: String, modifier: GlanceModifier) {
+    Column(modifier.padding(end = 2.dp)) {
+        Text(label, maxLines = 1, style = TextStyle(fontSize = 10.sp, color = secondary))
+        Row(verticalAlignment = Alignment.Vertical.CenterVertically) {
+            Image(ImageProvider(WeatherCodeMapper.drawableRes(code ?: -1)),
+                contentDescription = WeatherCodeMapper.condition(code ?: -1).label,
+                modifier = GlanceModifier.size(18.dp))
+            Text(temperature, maxLines = 1,
+                style = TextStyle(fontWeight = FontWeight.Medium, fontSize = 12.sp, color = primary))
+        }
     }
 }
 
-@Composable
-private fun DailyCell(day: DailyForecast) {
-    Row(
-        modifier = GlanceModifier.width(68.dp),
-        verticalAlignment = Alignment.Vertical.CenterVertically
-    ) {
-        WeatherImage(day.weatherCode ?: 0)
-        Text(
-            text = day.tempMax.temp(),
-            style = TextStyle(fontWeight = FontWeight.Medium, fontSize = 13.sp, color = ColorProvider(R.color.widget_text_primary))
-        )
-        Text(
-            text = day.tempMin.temp(),
-            style = TextStyle(fontSize = 11.sp, color = ColorProvider(R.color.widget_text_muted))
-        )
+internal fun widgetStatus(item: LocationForecast, active: Boolean, now: Instant): String {
+    val forecast = item.forecast
+    if (active) return if (forecast == null) "Loading…" else "Updating…"
+    if (forecast == null) return if (item.lastRefreshFailed) "Update failed · tap to retry" else "Forecast unavailable · tap to open"
+    val updated = forecast.fetchedAt.atZone(item.location.zone()).format(DateTimeFormatter.ofPattern("d/M HH:mm"))
+    val sourceName = when (forecast.providerId) {
+        "met_norway" -> "Yr"
+        "met_office" -> "Met Office"
+        else -> forecast.providerName
     }
+    val source = if (item.usingFallback) " · $sourceName fallback" else ""
+    return (if (item.lastRefreshFailed) "Update failed · data $updated"
+        else if (!isFresh(forecast.fetchedAt, now, java.time.Duration.ofHours(6))) "Old data · $updated"
+        else "Updated $updated") + source
 }
 
 @Composable
-private fun WeatherImage(code: Int) {
-    Image(
-        provider = ImageProvider(WeatherCodeMapper.drawableRes(code)),
-        contentDescription = WeatherCodeMapper.condition(code).label,
-        modifier = GlanceModifier.size(22.dp)
-    )
+private fun OpenLocationsText(text: String, context: Context) {
+    Text(text, modifier = GlanceModifier.fillMaxWidth().clickable(openAppAction(context, chooseLocations = true)).padding(4.dp),
+        style = TextStyle(fontSize = 14.sp, color = cyan))
 }
 
-@Composable
-private fun EmptyWidgetText(
-    text: String,
-    context: Context,
-    locationId: Long,
-    rowHeight: androidx.compose.ui.unit.Dp = 42.dp
-) {
-    Text(
-        text = text,
-        modifier = GlanceModifier
-            .fillMaxWidth()
-            .height(rowHeight)
-            .clickable(openAppAction(context, locationId))
-            .padding(4.dp),
-        style = TextStyle(fontSize = 14.sp, color = ColorProvider(R.color.widget_text_cyan))
-    )
-}
-
-private fun openAppAction(context: Context, locationId: Long) =
+internal fun openAppAction(context: Context, locationId: Long = 0, chooseLocations: Boolean = false) =
     actionStartActivity(
         Intent(context, MainActivity::class.java)
-            .setAction("com.example.weatherapp.OPEN_LOCATION_$locationId")
+            .setAction(if (chooseLocations) "com.example.weatherapp.CHOOSE_LOCATIONS" else "com.example.weatherapp.OPEN_LOCATION_$locationId")
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             .putExtra(MainActivity.EXTRA_LOCATION_ID, locationId)
+            .putExtra(MainActivity.EXTRA_LOCATIONS_PAGE, chooseLocations)
     )
 
-private fun isStale(forecast: Forecast): Boolean =
-    Instant.now().toEpochMilli() - forecast.fetchedAt.toEpochMilli() > WeatherRepository.STALE_AFTER_MILLIS
-
-private fun Double?.temp(): String = this?.let { "${it.roundToInt()}\u00B0" } ?: "\u2014"
+private fun Double?.temp(): String = this?.takeIf { it.isFinite() }?.let { it.roundToInt().toString() + "°" } ?: "—"
 
 suspend fun updateWeatherWidgets(context: Context) {
+    (context.applicationContext as WeatherApplication).container.widgetTime.value = Instant.now()
     WeatherWidget().updateAll(context)
 }
