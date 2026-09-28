@@ -3,11 +3,11 @@
     android:description="@string/app_name"
     android:initialLayout="@layout/glance_default_loading_layout"
     android:minWidth="320dp"
-    android:minHeight="160dp"
+    android:minHeight="96dp"
     android:minResizeHeight="48dp"
     android:previewImage="@drawable/ic_weather_partly_cloudy"
     android:resizeMode="horizontal|vertical"
     android:targetCellWidth="5"
-    android:targetCellHeight="2"
+    android:targetCellHeight="1"
     android:updatePeriodMillis="1800000"
     android:widgetCategory="home_screen" />

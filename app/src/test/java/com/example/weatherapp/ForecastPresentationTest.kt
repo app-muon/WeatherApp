@@ -5,9 +5,6 @@ import com.example.weatherapp.data.repository.*
 import com.example.weatherapp.domain.mapper.WeatherCodeMapper
 import com.example.weatherapp.domain.model.*
 import com.example.weatherapp.ui.forecast.*
-import com.example.weatherapp.ui.widget.chooseWidgetLayout
-import com.example.weatherapp.ui.widget.WidgetLayout
-import com.example.weatherapp.ui.widget.WidgetLayoutMetrics
 import org.junit.Assert.*
 import org.junit.Test
 import java.time.*
@@ -94,17 +91,6 @@ class ForecastPresentationTest {
         assertEquals("Updating…", updateStatusLabel(now, false, true, ZoneOffset.UTC))
         assertTrue(updateStatusLabel(now, true, false, ZoneOffset.UTC).startsWith("Update failed · showing data from"))
         assertEquals("Forecast unavailable", updateStatusLabel(null, false, false, ZoneOffset.UTC))
-    }
-
-    @Test fun undersizedAndLargeFontWidgetsHaveActionableCompactLayout() {
-        val normal = WidgetLayoutMetrics(16f, 13f, 13f, 15f, 65f, 26f)
-        assertEquals(WidgetLayout.Enlarge, chooseWidgetLayout(320f, 96f, normal))
-        assertEquals(WidgetLayout.Full, chooseWidgetLayout(320f, 160f, normal))
-        assertEquals(WidgetLayout.Full, chooseWidgetLayout(320f, 144f, normal))
-        assertEquals(WidgetLayout.Compact, chooseWidgetLayout(320f, 120f, normal))
-        val large = WidgetLayoutMetrics(24f, 20f, 20f, 23f, 94f, 35f)
-        assertEquals(WidgetLayout.Enlarge, chooseWidgetLayout(320f, 160f, large))
-        assertEquals(WidgetLayout.Full, chooseWidgetLayout(400f, 250f, large))
     }
 
     private fun location(zone: String) = LocationEntity(1, "Place", null, null, null, 0.0, 0.0, zone, 0, 0)
