@@ -258,7 +258,7 @@ class WeatherWidgetTest {
     private fun assertWeatherSymbols(host: FrameLayout, count: Int, context: Context) {
         val symbols = weatherSymbols(host)
         assertEquals("Keep a weather symbol for every visible cell", count, symbols.size)
-        val minimumSize = (16 * context.resources.displayMetrics.density).roundToInt()
+        val minimumSize = (17 * context.resources.displayMetrics.density).roundToInt()
         symbols.forEach { symbol ->
             assertTrue(symbol.width >= minimumSize && symbol.height >= minimumSize)
             assertContentBounds(host, symbol)

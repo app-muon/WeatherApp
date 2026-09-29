@@ -36,10 +36,10 @@ class WidgetLayoutTest {
             assertTrue(layout.requiredHeight <= height)
             assertEquals(13f, layout.typography.name.sp)
             assertEquals(height < 96, layout.inlineHeadings)
-            assertTrue(layout.typography.iconSize >= 16f)
+            assertTrue(layout.typography.iconSize >= 17f)
         }
         assertEquals(9f, chooseWidgetLayout(320f, 96f, metrics(), rows()).typography.date.sp)
-        assertEquals(18f, chooseWidgetLayout(320f, 160f, metrics(), rows()).typography.iconSize)
+        assertEquals(20f, chooseWidgetLayout(320f, 160f, metrics(), rows()).typography.iconSize)
     }
 
     @Test fun shortWidgetsRetainFirstCompleteForecastAndLargeFontsReduceContent() {
@@ -50,7 +50,7 @@ class WidgetLayoutTest {
             val result = chooseWidgetLayout(320f, 96f, metrics(scale), rows())
             assertEquals(1, result.visibleLocations)
             assertTrue(result.requiredHeight <= 96f)
-            assertEquals(12f, result.typography.value.sp)
+            assertEquals(11f, result.typography.value.sp)
         }
         assertFalse(chooseWidgetLayout(320f, 96f, metrics(2f), rows()).showForecast)
         val smallest = chooseWidgetLayout(320f, 48f, metrics(2f), rows())

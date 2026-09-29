@@ -16,7 +16,7 @@ internal interface WidgetLayoutMetrics {
 internal data class WidgetTypography(val date: WidgetTextStyle, val iconSize: Float) {
     val name = WidgetTextStyle(13f, WidgetFont.Bold)
     val status = WidgetTextStyle(10f)
-    val value = WidgetTextStyle(12f, WidgetFont.Medium)
+    val value = WidgetTextStyle(11f, WidgetFont.Medium)
     val action = WidgetTextStyle(12f)
 }
 
@@ -48,10 +48,11 @@ internal fun chooseWidgetLayout(
     metrics: WidgetLayoutMetrics,
     items: List<WidgetLocationContent>
 ): WidgetLayoutSpec {
-    val roomy = WidgetTypography(WidgetTextStyle(10f), 18f)
-    val dense = WidgetTypography(WidgetTextStyle(9f), 16f)
+    val roomy = WidgetTypography(WidgetTextStyle(10f), 20f)
+    val dense = WidgetTypography(WidgetTextStyle(9f), 18f)
+    val compact = WidgetTypography(WidgetTextStyle(9f), 17f)
     fun pixels(dp: Float) = floor(dp.coerceAtLeast(0f) * metrics.density + .001f) / metrics.density
-    fun candidate(count: Int, full: Boolean, abbreviated: Boolean, type: WidgetTypography, padding: Float, inlineHeadings: Boolean = false): WidgetLayoutSpec? {
+    fun candidate(count: Int, full: Boolean, abbreviated: Boolean, type: WidgetTypography, padding: Float, inlineHeadings: Boolean = false, rowGap: Float = 2f): WidgetLayoutSpec? {
         // Keep glyphs inside launcher-enforced rounded corners without adding vertical inset.
         val horizontalPadding = 8 + padding
         val available = pixels(width - 6 - 2 * horizontalPadding)
@@ -88,7 +89,7 @@ internal fun chooseWidgetLayout(
         val date = if (inlineHeadings) 0f else headingHeight
         val value = maxOf(type.iconSize, if (inlineHeadings) headingHeight else 0f,
             cells.maxOfOrNull { metrics.measure(it.temperature, type.value).height } ?: 0f)
-        val required = 6 + padding * 2 + count * (header + date + value) + (count - 1).coerceAtLeast(0) * 2
+        val required = 6 + padding * 2 + count * (header + date + value) + (count - 1).coerceAtLeast(0) * rowGap
         val fitsWidth = visible.all { item ->
             (if (full) item.cells else item.cells.take(1)).withIndex().all { (index, cell) ->
                 cellWidth(cell) <= columns[index]
@@ -98,33 +99,38 @@ internal fun chooseWidgetLayout(
         val actionHeight = metrics.measure("Add second location", type.action).height
         val add = when {
             items.size != 1 -> AddLocationAction.None
-            required + 2 + actionHeight <= height && metrics.measure("Add second location", type.action).width <= available -> AddLocationAction.Label
+            required + rowGap + actionHeight <= height && metrics.measure("Add second location", type.action).width <= available -> AddLocationAction.Label
             else -> AddLocationAction.Plus
         }
-        val contentHeight = required + if (add == AddLocationAction.Label) 2 + actionHeight else 0f
+        val contentHeight = required + if (add == AddLocationAction.Label) rowGap + actionHeight else 0f
         val gapCount = (count - 1).coerceAtLeast(0) + if (add == AddLocationAction.Label) 1 else 0
-        val extraSpacing = if (count > 0) pixels((height - contentHeight) / (2 + gapCount)) else 0f
-        return WidgetLayoutSpec(count, full, abbreviated, type, padding + extraSpacing, horizontalPadding, columns, header, date, value,
-            contentHeight + extraSpacing * (2 + gapCount), add, rowGap = 2 + extraSpacing, inlineHeadings = inlineHeadings)
+        // Keep the outer edges tighter, with more of the spare height between locations.
+        val edgeWeight = .75f
+        val extraSpacing = if (count > 0) pixels((height - contentHeight) / (2 * edgeWeight + gapCount)) else 0f
+        val edgeSpacing = pixels(extraSpacing * edgeWeight)
+        return WidgetLayoutSpec(count, full, abbreviated, type, padding + edgeSpacing, horizontalPadding, columns, header, date, value,
+            contentHeight + 2 * edgeSpacing + extraSpacing * gapCount, add, rowGap = rowGap + extraSpacing, inlineHeadings = inlineHeadings)
     }
 
     for (count in items.size.coerceAtMost(2) downTo 1) {
-        for ((type, padding) in listOf(roomy to 4f, dense to 0f)) {
+        for ((type, padding) in listOf(roomy to 2f, dense to 0f)) {
             for (abbreviated in listOf(false, true)) {
-                candidate(count, true, abbreviated, type, padding)?.let { return it }
+                candidate(count, true, abbreviated, type, padding, rowGap = padding)?.let { return it }
             }
         }
         // Two lines per location: header, then short weekdays, weather symbols and temperatures.
         // Today's forecast needs no heading. Try this before removing the second location.
-        candidate(count, true, true, dense, 0f, inlineHeadings = true)?.let { return it }
+        for (type in listOf(dense, compact)) {
+            candidate(count, true, true, type, 0f, inlineHeadings = true, rowGap = 0f)?.let { return it }
+        }
     }
-    for ((type, padding) in listOf(roomy to 4f, dense to 0f)) {
+    for ((type, padding) in listOf(roomy to 2f, dense to 0f)) {
         candidate(items.size.coerceAtMost(1), false, false, type, padding)?.let { return it }
     }
     // Very small hosts still get a clickable current-conditions row. No font-size overrides.
     val header = maxOf(metrics.measure(items.firstOrNull()?.name.orEmpty(), dense.name).height,
         metrics.measure(items.firstOrNull()?.status.orEmpty(), dense.status).height)
-    val value = maxOf(16f, metrics.measure(items.firstOrNull()?.cells?.first()?.temperature.orEmpty(), dense.value).height)
+    val value = maxOf(dense.iconSize, metrics.measure(items.firstOrNull()?.cells?.first()?.temperature.orEmpty(), dense.value).height)
     val inline = header + value + 6 > height
     return WidgetLayoutSpec(items.size.coerceAtMost(1), false, false, dense, 0f, 8f,
         listOf(pixels(width - 22)), header, 0f,
